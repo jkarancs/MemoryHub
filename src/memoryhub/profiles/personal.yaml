@@ -1,0 +1,18 @@
+# Personal schema profile.
+#
+# A profile defines the closed `type` vocabulary and the extra fields each type allows. This is
+# the generalization seam: `personal.yaml` today, `work.yaml` later, with no engine changes.
+name: personal
+types:
+  bio: { fields: [] }
+  skill: { fields: [proficiency, source] }
+  experience: { fields: [org, role, start, end, location, stack, highlights] }
+  education: { fields: [institution, degree, field, year] }
+  project: { fields: [stack, url, role] }
+  goal: { fields: [horizon, target_date, metric, blocking_skills] }
+  preference: { fields: [] }
+  writing: { fields: [] }
+common_required: [id, title, type, description, tags, status, visibility, created, updated]
+enums:
+  status: [active, archived, draft, aspirational]
+  visibility: [public, private]

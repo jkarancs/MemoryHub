@@ -1,0 +1,50 @@
+# Golden retrieval queries against the Phase 3 `personal-memory` corpus.
+#
+# Each entry is a real query a consumer (career skills, agents over MCP) would run, with the
+# ids that must appear in the hybrid top-5 for the query to count as a hit. `expect_any` means
+# ANY listed id in the top-5 is a hit. The local eval suite (tests/test_eval.py, marker
+# `local`) asserts an overall hit rate >= 0.8; CI skips it (no GPU / no corpus).
+#
+# Queries are deliberately phrased differently from the memory titles/tags where possible —
+# that's the semantic gap the vector side must close over plain fulltext.
+
+- query: vector databases
+  expect_any: [skill-embeddings-note, skill-rag]
+- query: retrieval augmented generation pipelines
+  expect_any: [skill-rag, skill-embeddings-note]
+- query: deploying LLMs for high-throughput serving
+  expect_any: [skill-llm-inference-serving, goal-master-llm-inference, goal-inference-deployment-capstone]
+- query: fine-tuning open models with LoRA
+  expect_any: [skill-fine-tuning, goal-ship-fine-tuned-llm]
+- query: building MCP servers for agents
+  expect_any: [skill-mcp-development, project-memoryhub]
+- query: multi-agent orchestration workflows
+  expect_any: [skill-llm-orchestration]
+- query: container orchestration in production
+  expect_any: [skill-kubernetes, skill-docker]
+- query: infrastructure as code
+  expect_any: [skill-terraform]
+- query: event streaming and message queues
+  expect_any: [skill-kafka, skill-cqrs-event-driven]
+- query: GPU programming experience
+  expect_any: [skill-cuda-gpu]
+- query: training a transformer from scratch
+  expect_any: [project-weightlifting, skill-transformers, skill-model-training]
+- query: particle physics research at CERN
+  expect_any: [education-debrecen-phd, project-cms-pixel-detector, bio-long-form, experience-atomki-research-assistant, experience-atomki-research-associate]
+- query: supersymmetry searches with world-leading limits
+  expect_any: [project-susy-single-lepton, project-susy-razor, writing-paper-single-lepton-susy, writing-paper-razor-boosted-susy]
+- query: how does he prefer to learn new material
+  expect_any: [preference-learning-by-implementation, preference-notebook-learning-style, preference-math-forward-learning, preference-learning-cadence]
+- query: remote work preferences
+  expect_any: [preference-remote-first, preference-async-independent-work]
+- query: target job and career direction
+  expect_any: [goal-ai-engineering-role, goal-nvidia-opportunity, goal-cloud-architect-track]
+- query: cloud certifications
+  expect_any: [education-cert-google-cloud-digital-leader, education-cert-google-cloud-bigdata-ml, goal-aws-solutions-architect-cert]
+- query: leading and coordinating technical teams
+  expect_any: [skill-technical-leadership, experience-atomki-research-associate]
+- query: analysing pandemic data
+  expect_any: [writing-covid-superspreader-analysis]
+- query: competitive strength sports
+  expect_any: [preference-strength-training]

@@ -1,0 +1,126 @@
+{
+  "additionalProperties": true,
+  "description": "Frontmatter for a MemoryHub memory file. Generated from the models + the 'personal' schema profile via `hub schema export`.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "bio",
+        "skill",
+        "experience",
+        "education",
+        "project",
+        "goal",
+        "preference",
+        "writing"
+      ],
+      "description": "Memory type (closed vocabulary defined by the profile)."
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "archived",
+        "draft",
+        "aspirational"
+      ]
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "public",
+        "private"
+      ]
+    },
+    "created": {
+      "format": "date",
+      "title": "Created",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "title": "Updated",
+      "type": "string"
+    },
+    "related": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related",
+      "type": "array"
+    },
+    "source": {
+      "default": "self",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "type",
+    "description",
+    "tags",
+    "status",
+    "visibility",
+    "created",
+    "updated"
+  ],
+  "title": "MemoryHub frontmatter (personal profile)",
+  "type": "object",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "x-memoryhub-type-fields": {
+    "bio": [],
+    "skill": [
+      "proficiency",
+      "source"
+    ],
+    "experience": [
+      "org",
+      "role",
+      "start",
+      "end",
+      "location",
+      "stack",
+      "highlights"
+    ],
+    "education": [
+      "institution",
+      "degree",
+      "field",
+      "year"
+    ],
+    "project": [
+      "stack",
+      "url",
+      "role"
+    ],
+    "goal": [
+      "horizon",
+      "target_date",
+      "metric",
+      "blocking_skills"
+    ],
+    "preference": [],
+    "writing": []
+  }
+}

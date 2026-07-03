@@ -1,0 +1,98 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memoryhub"
+version = "0.1.0"
+description = "MemoryHub — a reusable, content-agnostic engine over a markdown memory store"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "MemoryHub" }]
+keywords = ["memory", "markdown", "frontmatter", "vector-search", "knowledge-base"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+]
+
+# Core dependencies
+dependencies = [
+    "pydantic>=2",
+    "python-frontmatter",
+    "pyyaml",
+    "typer",
+    "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# Vector search stack. `vectors` is enough to run/serve an index built elsewhere;
+# add one embedding backend to build indexes or run queries.
+vectors = ["lancedb", "pyarrow"]
+local-embed = ["sentence-transformers", "torch"]
+api-embed = ["openai"]
+mcp = ["mcp"]
+# Developer tooling.
+dev = ["pytest", "pytest-cov", "ruff", "black", "mypy", "types-PyYAML"]
+
+[project.scripts]
+hub = "memoryhub.cli:app"
+
+[project.urls]
+Homepage = "https://example.com/MemoryHub"
+Repository = "https://example.com/MemoryHub"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memoryhub"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/memoryhub/profiles" = "memoryhub/profiles"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer requires typer.Option()/Argument() calls as parameter defaults.
+"src/memoryhub/cli.py" = ["B008"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["memoryhub"]
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["frontmatter", "yaml", "tomli", "lancedb", "sentence_transformers", "openai"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `local` needs the real personal-memory corpus + an embedding backend; deselected by default
+# (and in CI). Run it with: pytest -m local
+addopts = '-q -m "not local"'
+markers = [
+    "local: golden-query eval against the real corpus (needs GPU/model + content repo)",
+]
+filterwarnings = [
+    # table_names() stays for compatibility with older lancedb; its replacement returns a
+    # different type on newer versions.
+    'ignore:table_names\(\) is deprecated:DeprecationWarning',
+]
+
+[tool.coverage.run]
+branch = true
+source = ["memoryhub"]
