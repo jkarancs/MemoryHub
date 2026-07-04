@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from .config import Config, ConfigError, load_config
 from .embeddings import Embedder, EmbeddingError, get_embedder
+from .export import ExportError, ExportReport, ScanHit
 from .hub import Hub
 from .index import IndexWarning, ReindexStats, VectorIndex
 from .loader import LoadError, StoreReport, ValidationIssue
@@ -29,6 +30,9 @@ __all__ = [
     "Embedder",
     "EmbeddingError",
     "get_embedder",
+    "ExportError",
+    "ExportReport",
+    "ScanHit",
     "VectorIndex",
     "IndexWarning",
     "ReindexStats",

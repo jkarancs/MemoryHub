@@ -17,6 +17,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from . import export as export_module
 from . import loader, query, writer
 from .config import Config, load_config
 from .embeddings import EmbeddingError, content_hash
@@ -114,6 +115,16 @@ class Hub:
             writer.delete(self.config, id)
         finally:
             self._invalidate()
+
+    # --- export ------------------------------------------------------------------
+
+    def export(self, dest: str | Path, *, dry_run: bool = False) -> export_module.ExportReport:
+        """Deterministically sync the public+active subset of the store into ``dest``.
+
+        See :mod:`memoryhub.export` for the selection/transform/safety rules. ``dry_run``
+        reports what would change without touching the destination.
+        """
+        return export_module.export_store(self.config, dest, dry_run=dry_run)
 
     # --- vectors ---------------------------------------------------------------------
 

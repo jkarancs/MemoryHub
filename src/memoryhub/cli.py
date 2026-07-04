@@ -21,9 +21,11 @@ from typing import Any, NoReturn
 import typer
 import yaml
 
+from . import export as export_module
 from . import writer
 from .config import ConfigError, load_config
 from .embeddings import EmbeddingError
+from .export import ExportError
 from .hub import Hub
 from .index import IndexWarning
 from .loader import LoadError, flat_frontmatter, serialize
@@ -346,6 +348,52 @@ def validate_cmd(
             )
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+# --- export ----------------------------------------------------------------------
+
+
+@app.command("export")
+def export_cmd(
+    dest: Path = typer.Option(
+        ...,
+        "--dest",
+        "--to",
+        help="Public export repo to sync into (e.g. ../personal-memory-public).",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would change without writing anything."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", help="Publish despite sensitive-content warnings (skip the prompt)."
+    ),
+) -> None:
+    """Sync public content into a public store (only `visibility: public` + `status: active`).
+
+    A deterministic full sync: stale files in the destination are deleted, a README index and
+    a minimal read-only hub.toml are generated, and a second run yields zero diff. Refuses to
+    run while `hub validate` fails; emails/phone numbers/API-key shapes in exported text
+    require confirmation. Review the destination diff before committing/pushing it.
+    """
+    hub = _open_hub()
+    if yes:
+        export_module.confirm_callback = lambda _prompt: True
+    else:
+        export_module.confirm_callback = typer.confirm
+    try:
+        report = hub.export(dest, dry_run=dry_run)
+    except ExportError as exc:
+        _fail(str(exc))
+    except LoadError as exc:
+        _fail(str(exc))
+    if dry_run or yes:
+        for hit in report.hits:
+            typer.secho(f"warning: {hit}", fg=typer.colors.YELLOW, err=True)
+    for rel in report.written:
+        typer.echo(f"write  {rel}")
+    for rel in report.deleted:
+        typer.echo(f"delete {rel}")
+    typer.secho(str(report), fg=typer.colors.GREEN)
 
 
 # --- writes ----------------------------------------------------------------------

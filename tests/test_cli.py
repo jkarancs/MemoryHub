@@ -43,7 +43,7 @@ def test_schema_export_to_file(tmp_path: Path) -> None:
 def test_help_lists_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    commands = ("list", "get", "find", "search", "reindex", "new", "add", "update", "rm")
+    commands = ("list", "get", "find", "search", "reindex", "export", "new", "add", "update", "rm")
     for cmd in (*commands, "validate", "schema"):
         assert cmd in result.output
 

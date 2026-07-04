@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from memoryhub import writer
+from memoryhub import export, writer
 
 HUB_TOML = """\
 [hub]
@@ -204,9 +204,10 @@ def seeded_repo(content_repo: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _reset_confirm_callback() -> Iterator[None]:
-    """Keep the module-level confirmation hook from leaking between tests."""
+    """Keep the module-level confirmation hooks from leaking between tests."""
     yield
     writer.confirm_callback = None
+    export.confirm_callback = None
 
 
 def block_module(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:

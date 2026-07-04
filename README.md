@@ -29,6 +29,9 @@ pip install -e ".[vectors,local-embed]"
 
 # developer tooling
 pip install -e ".[dev,mcp]"
+
+# all of the above
+pip install -e ".[mcp,vectors,local-embed,dev]"
 ```
 
 > **Python:** requires 3.11+. The `local-embed` extra pulls in `torch`, whose wheels may lag the
@@ -40,22 +43,22 @@ pip install -e ".[dev,mcp]"
 from memoryhub import Hub, load_config, load_profile
 
 config = load_config("path/to/content-repo/")   # walks up to find hub.toml
-profile = load_profile(config.hub.profile)       # built-in name or path to a .yaml
+profile = load_profile(config.hub.profile)      # built-in name or path to a .yaml
 hub = Hub(config)
 ```
 
 ## CLI
 
 ```bash
-hub list --type skill      # frontmatter summaries, filterable (--tags/--status/--json …)
-hub get <id>               # one memory (raw markdown, or --json)
-hub find <term>            # full-text search, ranked by match count
-hub search <query>         # hybrid semantic search (--mode vector|text|hybrid, --limit, --json)
-hub reindex                # build/update the vector index (--full to re-embed everything)
-hub validate               # CI-grade store validation (non-zero exit on failure, --json)
+hub list --type skill        # frontmatter summaries, filterable (--tags/--status/--json …)
+hub get <id>                 # one memory (raw markdown, or --json)
+hub find <term>              # full-text search, ranked by match count
+hub search <query>           # hybrid semantic search (--mode vector|text|hybrid, --limit, --json)
+hub reindex                  # build/update the vector index (--full to re-embed everything)
+hub validate                 # CI-grade store validation (non-zero exit on failure, --json)
 hub new / add / update / rm  # guarded writes (validated before disk, atomic, soft delete)
-hub mcp                    # serve the store to agents over MCP (stdio; needs the [mcp] extra)
-hub schema export          # write frontmatter.schema.json from models + active profile
+hub mcp                      # serve the store to agents over MCP (stdio; needs the [mcp] extra)
+hub schema export            # write frontmatter.schema.json from models + active profile
 ```
 
 Every command resolves `hub.toml` by walking up from the current directory.

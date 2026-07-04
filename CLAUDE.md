@@ -27,3 +27,9 @@ Local venvs here are **uv-managed** (no pip): `uv pip install --python .venv/Scr
 - Python 3.11+, `src/` layout, Pydantic v2 (`extra="forbid"` so typos surface as errors).
 - IDs are slugs `^[a-z0-9][a-z0-9-]*$`, unique across the store.
 - Writes are atomic (temp file + `os.replace`) and validated **before** touching disk.
+
+## Committing
+
+- Commit on the user's behalf: one-line summary only (conventional prefix), never a multi-line body.
+- When fixing something just committed, amend the previous commit rather than stacking fixups.
+- Default branch is `main`.
