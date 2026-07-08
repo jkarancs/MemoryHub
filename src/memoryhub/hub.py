@@ -17,8 +17,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from . import bundle as bundle_module
 from . import export as export_module
 from . import loader, query, writer
+from .bundle import Bundle
 from .config import Config, load_config
 from .embeddings import EmbeddingError, content_hash
 from .index import IndexWarning, ReindexStats, VectorIndex
@@ -217,3 +219,41 @@ class Hub:
         rows for deleted ids. Needs the ``vectors`` extra plus a working embedding backend.
         """
         return self._index().reindex(self.all(), full=full)
+
+    # --- context bundles -------------------------------------------------------------
+
+    def recall_bundle(
+        self,
+        task: str,
+        token_budget: int,
+        *,
+        type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Bundle:
+        """Retrieve for ``task`` and pack the hits into a ``token_budget``-bounded context pack.
+
+        Runs hybrid search (over-fetching :data:`~memoryhub.bundle.OVER_FETCH` hits and degrading
+        to fulltext like any other search) *without* the ``type``/``tags`` filter, so the packer
+        can report which relevant memories a filter excluded. Packing (greedy fill, richest level
+        that fits, full-body floor) is delegated to :func:`memoryhub.bundle.pack`; the call is then
+        logged to the content root's context log (the per-task context-cost metric).
+        """
+        hits = self.search(task, mode="hybrid", limit=bundle_module.OVER_FETCH)
+        result = bundle_module.pack(
+            hits,
+            task,
+            token_budget,
+            type=type,
+            tags=tags,
+            max_rank=bundle_module.OVER_FETCH,
+        )
+        bundle_module.log_bundle(self.config.content_root, result)
+        return result
+
+    def context_stats(self, last_n: int = 20) -> dict[str, Any]:
+        """Recent context-log entries plus aggregates (avg tokens/task, inclusion rate).
+
+        Reads what :meth:`recall_bundle` has logged — "what got included/excluded and why" over
+        time. Returns an empty window (zeroed aggregates) if no bundle has been built yet.
+        """
+        return bundle_module.load_stats(self.config.content_root, last_n)

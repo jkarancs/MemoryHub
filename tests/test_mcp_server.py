@@ -23,7 +23,15 @@ from memoryhub.mcp_server import build_server  # noqa: E402
 
 pytestmark = pytest.mark.anyio
 
-READ_TOOLS = {"search_memory", "get_memory", "list_memories", "list_types", "list_tags"}
+READ_TOOLS = {
+    "search_memory",
+    "get_memory",
+    "list_memories",
+    "list_types",
+    "list_tags",
+    "recall_bundle",
+    "context_stats",
+}
 WRITE_TOOLS = {"add_memory", "update_memory", "archive_memory"}
 
 
@@ -145,6 +153,52 @@ async def test_list_tags_counts(server: Any) -> None:
     tags = unwrap(await call(server, "list_tags"))
     assert tags["python"] == 4
     assert list(tags)[0] == "python"
+
+
+# --- recall_bundle / context_stats ----------------------------------------------------
+
+
+async def test_recall_bundle_returns_pack_and_manifest(server: Any) -> None:
+    result = unwrap(
+        await call(server, "recall_bundle", {"task": "async python", "token_budget": 300})
+    )
+    assert result["budget"] == 300
+    assert result["total_tokens"] <= 300
+    assert result["text"].startswith("# Context for: async python")
+    assert result["counter"] in {"tiktoken", "heuristic"}
+    assert result["included"], "expected at least one memory in the pack"
+    top = result["included"][0]
+    assert top["id"] == "skill-async-python"
+    assert top["level"] in {"full", "description", "title"}
+    assert set(top) == {"id", "title", "rank", "score", "level", "tokens"}
+    assert isinstance(result["excluded"], list)
+
+
+async def test_recall_bundle_type_filter_and_exclusions(server: Any) -> None:
+    result = unwrap(
+        await call(
+            server,
+            "recall_bundle",
+            {"task": "python", "token_budget": 2000, "type": "skill"},
+        )
+    )
+    assert result["included"]
+    assert all(item["id"].startswith("skill-") for item in result["included"])
+    # non-skill "python" hits (e.g. project-hub) are reported as filter exclusions
+    assert any(item["reason"] == "filter" for item in result["excluded"])
+
+
+async def test_context_stats_accumulates_calls(server: Any) -> None:
+    empty = unwrap(await call(server, "context_stats"))
+    assert empty["aggregates"]["calls"] == 0
+
+    await call(server, "recall_bundle", {"task": "docker", "token_budget": 250})
+    await call(server, "recall_bundle", {"task": "sql", "token_budget": 250})
+
+    stats = unwrap(await call(server, "context_stats", {"last_n": 20}))
+    assert stats["aggregates"]["calls"] == 2
+    assert {e["task"] for e in stats["entries"]} == {"docker", "sql"}
+    assert 0.0 <= stats["aggregates"]["inclusion_rate"] <= 1.0
 
 
 # --- add_memory guardrails ------------------------------------------------------------

@@ -33,8 +33,12 @@ vectors = ["lancedb", "pyarrow"]
 local-embed = ["sentence-transformers", "torch"]
 api-embed = ["openai"]
 mcp = ["mcp"]
-# Developer tooling.
-dev = ["pytest", "pytest-cov", "ruff", "black", "mypy", "types-PyYAML"]
+# Exact token counting for context bundles (recall_bundle). Optional: without it the bundler
+# falls back to a len//4 heuristic, recording which counter it used in the manifest.
+tokens = ["tiktoken"]
+# Developer tooling. Includes tiktoken so CI exercises the real token counter, not just the
+# heuristic fallback.
+dev = ["pytest", "pytest-cov", "ruff", "black", "mypy", "types-PyYAML", "tiktoken"]
 
 [project.scripts]
 hub = "memoryhub.cli:app"

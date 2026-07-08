@@ -5,6 +5,7 @@ Public API surface. Import from here rather than from submodules.
 
 from __future__ import annotations
 
+from .bundle import Bundle, BundleItem, Excluded
 from .config import Config, ConfigError, load_config
 from .embeddings import Embedder, EmbeddingError, get_embedder
 from .export import ExportError, ExportReport, ScanHit
@@ -24,6 +25,9 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Hub",
+    "Bundle",
+    "BundleItem",
+    "Excluded",
     "Config",
     "ConfigError",
     "load_config",

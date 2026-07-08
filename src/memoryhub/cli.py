@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import sys
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,6 +24,7 @@ import yaml
 
 from . import export as export_module
 from . import writer
+from .bundle import Bundle
 from .config import ConfigError, load_config
 from .embeddings import EmbeddingError
 from .export import ExportError
@@ -41,6 +43,28 @@ app = typer.Typer(
 )
 schema_app = typer.Typer(help="Schema tooling.", no_args_is_help=True)
 app.add_typer(schema_app, name="schema")
+
+
+def _force_utf8_streams() -> None:
+    """Emit UTF-8 regardless of the platform's locale encoding.
+
+    On Windows a *redirected* stdout/stderr defaults to cp1252, which mojibakes any non-ASCII in a
+    pack — the heading em-dash, accented names, Hungarian text — so `hub bundle ... > pack.md`
+    would corrupt. Reconfiguring to UTF-8 matches how the engine writes files. A no-op where the
+    stream can't be reconfigured (e.g. test capture buffers already on UTF-8).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            with contextlib.suppress(ValueError, OSError):
+                reconfigure(encoding="utf-8")
+
+
+@app.callback()
+def _root() -> None:
+    """MemoryHub CLI — read, query, and (guarded) write a markdown memory store."""
+    _force_utf8_streams()
+
 
 DEFAULT_SCHEMA_OUT = Path("schema") / "frontmatter.schema.json"
 
@@ -301,6 +325,58 @@ def search_cmd(
         _echo_json([_doc_summary(doc, hub.profile) for doc in docs])
     else:
         _print_table(docs)
+
+
+def _print_bundle_manifest(bundle: Bundle) -> None:
+    """Show the pack's manifest (what was included at which level) + exclusions, on stderr."""
+    typer.secho(
+        f"\n{bundle.total_tokens}/{bundle.budget} tokens "
+        f"({len(bundle.manifest)} included, {len(bundle.excluded)} excluded, "
+        f"counter: {bundle.counter})",
+        fg=typer.colors.CYAN,
+        err=True,
+    )
+    if bundle.manifest:
+        rank_w = max(len(str(item.rank)) for item in bundle.manifest)
+        id_w = max(len(item.id) for item in bundle.manifest)
+        level_w = max(len(item.level) for item in bundle.manifest)
+        for item in bundle.manifest:
+            typer.secho(
+                f"  #{item.rank:<{rank_w}}  {item.id:<{id_w}}  "
+                f"{item.level:<{level_w}}  {item.tokens:>5} tok",
+                dim=True,
+                err=True,
+            )
+    for ex in bundle.excluded:
+        where = f"#{ex.rank} " if ex.rank is not None else ""
+        typer.secho(f"  excluded {where}{ex.id} ({ex.reason})", fg=typer.colors.YELLOW, err=True)
+
+
+@app.command("bundle")
+def bundle_cmd(
+    task: str = typer.Argument(..., help="What you need context for (used as query + header)."),
+    budget: int = typer.Option(2000, "--budget", "-b", help="Token budget; never exceeded."),
+    type: str | None = typer.Option(None, "--type", help="Filter by memory type."),
+    tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags (AND-match)."),
+    json_out: bool = typer.Option(False, "--json", help="Emit the whole bundle as JSON."),
+) -> None:
+    """Build a task-scoped context pack that fits a token budget (richest memories first).
+
+    Prints the markdown pack to stdout and a manifest (levels + token costs + exclusions) to
+    stderr, so `hub bundle ... > pack.md` captures just the pack. Falls back to plain fulltext —
+    with a warning — when the vectors extra isn't installed or no index has been built yet.
+    """
+    hub = _open_hub()
+    try:
+        with _surfaced_index_warnings():
+            bundle = hub.recall_bundle(task, budget, type=type, tags=_split_csv(tags))
+    except (LoadError, EmbeddingError) as exc:
+        _fail(str(exc))
+    if json_out:
+        _echo_json(bundle.model_dump())
+        return
+    typer.echo(bundle.text)
+    _print_bundle_manifest(bundle)
 
 
 @app.command("reindex")

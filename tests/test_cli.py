@@ -43,7 +43,19 @@ def test_schema_export_to_file(tmp_path: Path) -> None:
 def test_help_lists_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    commands = ("list", "get", "find", "search", "reindex", "export", "new", "add", "update", "rm")
+    commands = (
+        "list",
+        "get",
+        "find",
+        "search",
+        "bundle",
+        "reindex",
+        "export",
+        "new",
+        "add",
+        "update",
+        "rm",
+    )
     for cmd in (*commands, "validate", "schema"):
         assert cmd in result.output
 
@@ -130,6 +142,39 @@ def test_find_invalid_regex_exits_2(in_repo: Path) -> None:
     result = runner.invoke(app, ["find", "[unclosed", "--regex"])
     assert result.exit_code == 2
     assert "regex" in result.stderr
+
+
+# --- bundle --------------------------------------------------------------------------
+
+
+def test_bundle_prints_pack_to_stdout_and_manifest_to_stderr(in_repo: Path) -> None:
+    result = runner.invoke(app, ["bundle", "async python", "--budget", "300"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.startswith("# Context for: async python")  # pack on stdout
+    assert "## skill-async-python — Async Python" in result.stdout  # em-dash heading intact
+    assert "skill-async-python" in result.stdout  # pack body
+    assert "/300 tokens" in result.stderr  # manifest summary line (stderr)
+    assert "skill-async-python" in result.stderr  # manifest row
+
+
+def test_bundle_json_is_machine_readable(in_repo: Path) -> None:
+    result = runner.invoke(app, ["bundle", "async", "--budget", "500", "--json"])
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)  # stdout is pure JSON; warnings go to stderr
+    assert payload["budget"] == 500
+    assert payload["total_tokens"] <= 500
+    assert payload["manifest"][0]["id"] == "skill-async-python"
+    assert "level" in payload["manifest"][0]
+
+
+def test_bundle_type_filter(in_repo: Path) -> None:
+    result = runner.invoke(
+        app, ["bundle", "python", "--budget", "800", "--type", "skill", "--json"]
+    )
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert all(item["id"].startswith("skill-") for item in payload["manifest"])
+    assert any(e["reason"] == "filter" for e in payload["excluded"])
 
 
 # --- add / update / rm / new ---------------------------------------------------------

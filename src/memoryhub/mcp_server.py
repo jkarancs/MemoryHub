@@ -210,6 +210,65 @@ def _register_read_tools(server: FastMCP, hub: Hub) -> None:
         """
         return hub.list_tags()
 
+    @server.tool(annotations=_READ_ONLY)
+    def recall_bundle(
+        task: Annotated[
+            str,
+            Field(
+                description=(
+                    "What you need context for, in natural language — used as the search query "
+                    "and as the pack's header (e.g. 'prep for the NVIDIA interview loop')."
+                )
+            ),
+        ],
+        token_budget: Annotated[
+            int,
+            Field(description="Hard cap on the pack's size in tokens; it is never exceeded.", ge=1),
+        ],
+        type: Annotated[
+            str | None,
+            Field(description="Restrict to one memory type (see list_types)."),
+        ] = None,
+        tags: Annotated[
+            list[str] | None,
+            Field(description="Restrict to memories carrying ALL of these tags (see list_tags)."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Build a task-scoped context pack that fits a token budget, richest memories first.
+
+        Returns ready-to-paste markdown ('text') plus an inline manifest so one call is
+        self-explaining: 'included' lists each memory with the level it was rendered at (full
+        body / one-line description / title only) and its token cost; 'excluded' says what was
+        dropped and why (budget / filter / floor). Prefer this over several get_memory calls when
+        you need the most relevant context under a size limit. Example:
+        recall_bundle("summarize my backend experience", 1500, type="experience").
+        """
+        result = hub.recall_bundle(task, token_budget, type=type, tags=tags)
+        return {
+            "text": result.text,
+            "total_tokens": result.total_tokens,
+            "budget": result.budget,
+            "counter": result.counter,
+            "included": [item.model_dump() for item in result.manifest],
+            "excluded": [item.model_dump() for item in result.excluded],
+        }
+
+    @server.tool(annotations=_READ_ONLY)
+    def context_stats(
+        last_n: Annotated[
+            int,
+            Field(description="How many recent bundle calls to summarize (<=0 for all)."),
+        ] = 20,
+    ) -> dict[str, Any]:
+        """Recent recall_bundle calls plus aggregates: what context cost per task, over time.
+
+        Returns the last N logged bundles ('entries': task, budget, tokens used, how many
+        memories were included vs excluded, which token counter) and 'aggregates' (calls, average
+        tokens per task, average memories included, overall inclusion rate). Use it to see whether
+        budgets are too tight (low inclusion rate) or generous. Example: context_stats(50).
+        """
+        return hub.context_stats(last_n)
+
 
 def _register_write_tools(server: FastMCP, hub: Hub) -> None:
     profile = hub.profile
