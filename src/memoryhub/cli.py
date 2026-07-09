@@ -571,10 +571,14 @@ def mcp_cmd() -> None:
     writes always land as private drafts. Requires the extra: pip install "memoryhub[mcp]".
     """
     try:
-        from .mcp_server import build_server
+        from .mcp_server import build_server, warm_search_stack
     except ModuleNotFoundError as exc:
         _fail(f'MCP support is not installed ({exc}); run: pip install "memoryhub[mcp]"', code=2)
     hub = _open_hub()
+    # Load the native search stack (numpy/lancedb/torch) here, on the main thread, before the
+    # event loop starts — importing it lazily inside the first search deadlocks the stdio server
+    # on the loader lock (see warm_search_stack). This is the entry point `hub mcp` actually runs.
+    warm_search_stack(hub)
     build_server(hub).run(transport="stdio")
 
 

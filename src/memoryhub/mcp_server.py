@@ -18,6 +18,7 @@ is resolved by walking up from the cwd), or register it in the repo's ``.mcp.jso
 from __future__ import annotations
 
 import contextlib
+import logging
 import warnings
 from collections.abc import Iterator
 from datetime import date
@@ -35,6 +36,8 @@ from .loader import flat_frontmatter
 from .models import MemoryDoc
 from .profiles import Profile
 from .writer import WriteError, WriteWarning
+
+logger = logging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
 MemoryHub: a store of markdown memories with typed, validated frontmatter.
@@ -421,9 +424,31 @@ def build_server(hub: Hub) -> FastMCP:
     return server
 
 
+def warm_search_stack(hub: Hub) -> None:
+    """Load the vector index + embedder (and their native deps) on the calling thread.
+
+    Call this on the **main thread, before** FastMCP starts its asyncio event loop. The heavy
+    search dependencies (numpy, lancedb, torch, sentence-transformers) are imported lazily on
+    the first ``search_memory`` — and FastMCP runs sync tool handlers directly on the event-loop
+    thread. Doing that first native import there, with anyio's worker/I-O threads already alive,
+    can deadlock in the OS dynamic-library loader (the loader lock vs. the BLAS/torch thread
+    pools spun up inside the extension's init) — hanging the single-threaded stdio server on the
+    first search. That hang has been observed reliably on Windows. Warming up front pays the
+    one-time load on a clean main thread and sidesteps it; the memoized index/embedder are then
+    reused in-loop. Best-effort: any failure just means the first real search falls back to
+    fulltext, so a missing model or index must never stop the server from starting.
+    """
+    try:
+        hub.search("warmup", mode="hybrid", limit=1)
+    except Exception as exc:  # noqa: BLE001 — warmup must never prevent the server from serving
+        logger.warning("search warmup failed (%s); search will fall back to fulltext", exc)
+
+
 def main() -> None:
     """Start a stdio MCP server over the store whose ``hub.toml`` is at or above the cwd."""
-    build_server(Hub(load_config(Path.cwd()))).run(transport="stdio")
+    hub = Hub(load_config(Path.cwd()))
+    warm_search_stack(hub)  # before .run(): load native search deps off the event-loop thread
+    build_server(hub).run(transport="stdio")
 
 
 if __name__ == "__main__":  # pragma: no cover

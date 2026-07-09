@@ -19,7 +19,7 @@ from mcp.shared.memory import (  # noqa: E402
 from mcp.types import CallToolResult  # noqa: E402
 
 from memoryhub import Hub, load_config  # noqa: E402
-from memoryhub.mcp_server import build_server  # noqa: E402
+from memoryhub.mcp_server import build_server, warm_search_stack  # noqa: E402
 
 pytestmark = pytest.mark.anyio
 
@@ -387,3 +387,27 @@ def test_cli_mcp_command_builds_and_runs_stdio_server(
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 0, result.output
     assert seen == {"content_root": seeded_repo / "memory", "transport": "stdio"}
+
+
+# --- startup warmup (avoids the first-search native-import deadlock) ------------------
+
+
+def test_warm_search_stack_is_non_fatal_without_index(content_repo: Path) -> None:
+    # Empty store, no vector index: warmup degrades to fulltext and must not raise — whether or
+    # not the vector/embedding extras are installed. The contract is that it never blocks startup.
+    warm_search_stack(Hub(load_config(content_repo)))
+
+
+def test_warm_search_stack_swallows_search_errors(
+    seeded_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A failing embedder/index must be logged and swallowed, never propagated to stop the server.
+    hub = Hub(load_config(seeded_repo))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("embedder exploded")
+
+    hub.search = boom  # type: ignore[method-assign]
+    with caplog.at_level("WARNING", logger="memoryhub.mcp_server"):
+        warm_search_stack(hub)  # must not raise
+    assert any("warmup failed" in record.message for record in caplog.records)
