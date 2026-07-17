@@ -1,0 +1,20 @@
+schema: ai-kb/v4
+generator_version: "4.1"
+project: MemoryHub
+profile: full
+repo_kind: single
+work_tracking: { kind: phase-specs, ledger: ../specs/ai-roadmap/00-INDEX.md }
+conventions:
+  branch: "main — direct commits"
+  commit: "one-line summary, no body; on the user's behalf; amend-on-fix ok"
+  verification: "uv run --no-sync pytest"
+workspace_knowledge: "../CLAUDE.md"
+key_flows: [guarded-write-flow, search-flow, public-export-flow]
+components:
+  - id: memoryhub
+    path: src/memoryhub
+    kind: library
+flags:
+  nested_agents: no
+  adr_enabled: no
+  shims: { copilot: no }

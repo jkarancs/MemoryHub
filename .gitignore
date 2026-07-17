@@ -23,3 +23,6 @@ coverage.xml
 .vscode/
 .idea/
 .DS_Store
+
+# AI knowledge layer
+.ai/scratchpad/
