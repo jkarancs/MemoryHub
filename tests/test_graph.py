@@ -525,6 +525,20 @@ def test_cli_ready_include_blocked(in_graph_repo: Path) -> None:
     ]
 
 
+def test_cli_ready_full_briefs_every_node(in_graph_repo: Path) -> None:
+    # What the human-loop skills call: one query, and the whole queue is briefed.
+    result = runner.invoke(app, ["graph", "ready", "demo", "--full"])
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)
+    assert [row["node"]["id"] for row in rows] == ["demo-hardening-02", "demo-commercial-01"]
+    assert rows[0]["node"]["body"]
+    assert rows[1]["repository"] == "DemoSite"
+    assert rows[1]["reads"] == ["demo-commercial-01-plan", "demo-commercial-01-test"]
+    # `next` is the first of these.
+    first = runner.invoke(app, ["graph", "next", "demo", "--json"])
+    assert json.loads(first.output) == rows[0]
+
+
 def test_cli_ready_on_a_node_scope_exits_1(in_graph_repo: Path) -> None:
     result = runner.invoke(app, ["graph", "ready", "demo-hardening-01"])
     assert result.exit_code == 1

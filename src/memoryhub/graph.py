@@ -259,16 +259,12 @@ class Graph:
         project = self._typed(_ref(supernode, PROJECT) or "", PROJECT)
         return _ref(project, "repository") if project is not None else None
 
-    def next(self, scope_id: str, statuses: Sequence[str] = ACTIONABLE) -> dict[str, Any] | None:
-        """The first ready node in walk order, packaged for a skill — or ``None`` if idle.
+    def brief(self, node: MemoryDoc) -> dict[str, Any]:
+        """Everything a skill needs to act on ``node``, in one payload.
 
-        The payload carries the whole node (frontmatter + body, so acceptance criteria need no
-        second call), where to run (``repository``), and ``reads``: the subnode ids to fetch.
+        The whole node (frontmatter + body, so acceptance criteria need no second call), where to
+        run (``repository``), and ``reads``: the subnode ids to fetch.
         """
-        ready = self.ready(scope_id, statuses)
-        if not ready:
-            return None
-        node = ready[0]
         supernode_id = _ref(node, SUPERNODE)
         supernode = self._typed(supernode_id or "", SUPERNODE)
         payload = flat_frontmatter(node.frontmatter, self.profile)
@@ -281,6 +277,11 @@ class Graph:
             "repository": self.repository(node),
             "reads": self.reads_for(node),
         }
+
+    def next(self, scope_id: str, statuses: Sequence[str] = ACTIONABLE) -> dict[str, Any] | None:
+        """The first ready node in walk order, briefed for a skill — or ``None`` if idle."""
+        ready = self.ready(scope_id, statuses)
+        return self.brief(ready[0]) if ready else None
 
     def status(self, scope_id: str) -> dict[str, Any]:
         """Node counts by status, per supernode and for the scope as a whole."""

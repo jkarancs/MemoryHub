@@ -502,6 +502,12 @@ def graph_ready_cmd(
         help="Also list nodes whose dependencies aren't done (the human queue: a person's "
         "decision doesn't wait on unbuilt code).",
     ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Emit each node as a `graph next` payload (body, repository, reads) instead of a "
+        "frontmatter summary — one call to brief a whole queue. Implies --json.",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Emit the nodes as JSON."),
 ) -> None:
     """Every ready node in SCOPE, in walk order (`next` returns the first of these)."""
@@ -510,7 +516,9 @@ def graph_ready_cmd(
         docs = graph.ready(scope, _statuses(status), include_blocked=include_blocked)
     except GraphError as exc:
         _fail(str(exc))
-    if json_out:
+    if full:
+        _echo_json([graph.brief(doc) for doc in docs])
+    elif json_out:
         _echo_json([_doc_summary(doc, graph.profile) for doc in docs])
     else:
         _print_table(docs)
