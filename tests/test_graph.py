@@ -334,6 +334,37 @@ def test_validate_flags_an_edge_into_a_superseded_node(graph_repo: Path) -> None
     ]
 
 
+def test_validate_flags_an_unfinished_supersession(graph_repo: Path) -> None:
+    # `/replan` crashed after writing the replacement and before retiring the original.
+    write_node(
+        graph_repo,
+        "demo-hardening-02-r1",
+        extras={"supernode": "demo-hardening", "supersedes": "demo-hardening-02"},
+    )
+    assert _problems(_graph_of(graph_repo).validate()) == [
+        (
+            "supersedes",
+            "supersedes 'demo-hardening-02', whose status is 'planned' — finish the "
+            "supersession: append the record to that node and set it 'superseded'",
+        )
+    ]
+
+
+def test_validate_accepts_a_superseded_node_with_no_replacement(graph_repo: Path) -> None:
+    # A cancellation (plan §11.16): retired by `/feedback`, with nothing taking it over.
+    write_node(
+        graph_repo,
+        "demo-hardening-03",
+        status="superseded",
+        extras={
+            "depends_on": "[demo-hardening-02]",
+            "subnodes": "[demo-hardening-03-plan, demo-hardening-03-fdbk]",
+        },
+    )
+    write_subnode(graph_repo, "demo-hardening-03", "fdbk", "superseded")
+    assert _problems(_graph_of(graph_repo).validate()) == []
+
+
 def test_validate_flags_status_verdict_drift(graph_repo: Path) -> None:
     write_node(
         graph_repo,

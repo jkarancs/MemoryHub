@@ -318,10 +318,11 @@ class Graph:
     def validate(self) -> StoreReport:
         """Check the graph invariants no per-file schema check can see (plan §6).
 
-        Dangling references · dependency cycles · edges into ``superseded`` nodes · node status
-        vs the newest subnode's ``verdict`` · ``attempt`` vs the number of ``impl`` subnodes ·
-        id/filename agreement · per-type status validity · per-type required fields · a work
-        record for every started node · subnodes their node actually lists.
+        Dangling references · dependency cycles · edges into ``superseded`` nodes · unfinished
+        supersessions · node status vs the newest subnode's ``verdict`` · ``attempt`` vs the
+        number of ``impl`` subnodes · id/filename agreement · per-type status validity ·
+        per-type required fields · a work record for every started node · subnodes their node
+        actually lists.
         """
         issues: list[ValidationIssue] = []
         for doc in self.docs:
@@ -331,6 +332,7 @@ class Graph:
             issues += self._check_references(doc)
         for node in self._of_type(NODE):
             issues += self._check_superseded_deps(node)
+            issues += self._check_supersession(node)
             issues += self._check_history(node)
         for sub in self._of_type(SUBNODE):
             issues += self._check_attachment(sub)
@@ -389,6 +391,30 @@ class Graph:
                     )
                 )
         return issues
+
+    def _check_supersession(self, node: MemoryDoc) -> list[ValidationIssue]:
+        """A replacement's ``supersedes`` target must actually be ``superseded``.
+
+        This is the crash signature ``/replan`` opens: it writes the replacement first (so an
+        interruption leaves a dangling id rather than a silently orphaned node) and retires the
+        old node last. Between the two the store looks legal — a fresh ``planned`` node and an
+        untouched original that the queue will hand out again. The forward pointer is what makes
+        it detectable. The converse is *not* an error: a ``superseded`` node with no replacement
+        is a cancellation (plan §11.16), and its own record says so.
+        """
+        target_id = _ref(node, "supersedes")
+        target = self._typed(target_id or "", NODE)
+        if target is None or target.frontmatter.status == SUPERSEDED:
+            return []  # unresolvable/absent `supersedes` is already reported by the other checks
+        return [
+            ValidationIssue(
+                node.path,
+                "supersedes",
+                f"supersedes {target.id!r}, whose status is "
+                f"{target.frontmatter.status!r} — finish the supersession: append the record to "
+                f"that node and set it {SUPERSEDED!r}",
+            )
+        ]
 
     def _check_attachment(self, sub: MemoryDoc) -> list[ValidationIssue]:
         """A subnode must appear in its node's ``subnodes`` list, or nothing can see it.

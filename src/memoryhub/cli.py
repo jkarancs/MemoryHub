@@ -552,11 +552,11 @@ def graph_validate_cmd(
 ) -> None:
     """Check the graph invariants; exits non-zero on any problem.
 
-    Dangling references, dependency cycles, edges into superseded nodes, node status vs the
-    newest subnode's verdict, `attempt` vs impl-subnode count, id/filename agreement, per-type
-    status validity and required fields (the profile can only declare one store-wide status
-    enum and no per-type requirements), a work record for every started node, and subnodes
-    their node actually lists.
+    Dangling references, dependency cycles, edges into superseded nodes, unfinished
+    supersessions, node status vs the newest subnode's verdict, `attempt` vs impl-subnode
+    count, id/filename agreement, per-type status validity and required fields (the profile can
+    only declare one store-wide status enum and no per-type requirements), a work record for
+    every started node, and subnodes their node actually lists.
     """
     graph = _open_graph()
     report = graph.validate()
