@@ -496,12 +496,18 @@ def graph_ready_cmd(
     status: str | None = typer.Option(
         None, "--status", help="Comma-separated node statuses (default: every actionable one)."
     ),
+    include_blocked: bool = typer.Option(
+        False,
+        "--include-blocked",
+        help="Also list nodes whose dependencies aren't done (the human queue: a person's "
+        "decision doesn't wait on unbuilt code).",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Emit the nodes as JSON."),
 ) -> None:
     """Every ready node in SCOPE, in walk order (`next` returns the first of these)."""
     graph = _open_graph()
     try:
-        docs = graph.ready(scope, _statuses(status))
+        docs = graph.ready(scope, _statuses(status), include_blocked=include_blocked)
     except GraphError as exc:
         _fail(str(exc))
     if json_out:

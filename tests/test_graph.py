@@ -79,6 +79,23 @@ def test_ready_filters_by_status(graph: Graph) -> None:
     assert [doc.id for doc in graph.ready("demo", ["rejected"])] == ["demo-commercial-01"]
 
 
+def test_ready_hides_a_blocked_human_gated_node_unless_asked(graph_repo: Path) -> None:
+    # Migration writes human-pending items straight to `needs-feedback` (plan §8.2), so one can
+    # be gated on a person *and* blocked on unbuilt code. The person can still decide.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="needs-feedback",
+        extras={"depends_on": "[demo-hardening-03]", "subnodes": "[demo-hardening-04-plan]"},
+    )
+    write_subnode(graph_repo, "demo-hardening-04", "plan", "needs-feedback")
+    graph = _graph_of(graph_repo)
+    assert graph.ready("demo", ["needs-feedback"]) == []
+    assert [doc.id for doc in graph.ready("demo", ["needs-feedback"], include_blocked=True)] == [
+        "demo-hardening-04"
+    ]
+
+
 def test_ready_skips_done_supernodes(graph_repo: Path) -> None:
     write_graph_doc(
         graph_repo,
@@ -162,6 +179,68 @@ def test_next_reads_the_newest_subnode_of_each_role(graph_repo: Path) -> None:
     assert payload is not None
     # The retry supersedes the first attempt; `fix` has no subnode yet, so it contributes nothing.
     assert payload["reads"] == ["demo-hardening-04-plan", "demo-hardening-04-impl2"]
+
+
+def test_next_on_a_human_gated_node_reads_every_role(graph_repo: Path) -> None:
+    # Here the raiser is a blocked `/implement` (plan §11.12), not the tester — the status alone
+    # never says who raised it, so the human gets the newest record of each role.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="needs-feedback",
+        extras={
+            "subnodes": (
+                "[demo-hardening-04-plan, demo-hardening-04-test, demo-hardening-04-fdbk, "
+                "demo-hardening-04-impl]"
+            ),
+            "attempt": 1,
+        },
+    )
+    for suffix, role, verdict in (
+        ("plan", "plan", "planned"),
+        ("test", "test", "rejected"),
+        ("fdbk", "fdbk", "needs-fix"),
+        ("impl", "impl", "needs-feedback"),
+    ):
+        write_subnode(graph_repo, "demo-hardening-04", role, verdict, suffix=suffix)
+    payload = _graph_of(graph_repo).next("demo-hardening", ["needs-feedback"])
+    assert payload is not None
+    assert payload["reads"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-test",
+        "demo-hardening-04-fdbk",
+        "demo-hardening-04-impl",
+    ]
+
+
+def test_next_on_a_needs_fix_node_reads_the_findings_behind_the_decision(graph_repo: Path) -> None:
+    # The `-fdbk` records the human's ruling; the findings it ruled on are in the `-test`.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="needs-fix",
+        extras={
+            "subnodes": (
+                "[demo-hardening-04-plan, demo-hardening-04-impl, demo-hardening-04-test, "
+                "demo-hardening-04-fdbk]"
+            ),
+            "attempt": 1,
+        },
+    )
+    for suffix, role, verdict in (
+        ("plan", "plan", "planned"),
+        ("impl", "impl", "implemented"),
+        ("test", "test", "needs-feedback"),
+        ("fdbk", "fdbk", "needs-fix"),
+    ):
+        write_subnode(graph_repo, "demo-hardening-04", role, verdict, suffix=suffix)
+    payload = _graph_of(graph_repo).next("demo-hardening", ["needs-fix"])
+    assert payload is not None
+    assert payload["reads"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-test",
+        "demo-hardening-04-fdbk",
+    ]
 
 
 def test_next_returns_none_when_nothing_is_ready(graph: Graph) -> None:
@@ -401,6 +480,16 @@ def test_cli_ready(in_graph_repo: Path) -> None:
     as_json = runner.invoke(app, ["graph", "ready", "demo", "--json"])
     assert [row["id"] for row in json.loads(as_json.output)] == [
         "demo-hardening-02",
+        "demo-commercial-01",
+    ]
+
+
+def test_cli_ready_include_blocked(in_graph_repo: Path) -> None:
+    result = runner.invoke(app, ["graph", "ready", "demo", "--include-blocked", "--json"])
+    assert result.exit_code == 0, result.output
+    assert [row["id"] for row in json.loads(result.output)] == [
+        "demo-hardening-02",
+        "demo-hardening-03",  # blocked behind 02, and only listed because we asked
         "demo-commercial-01",
     ]
 

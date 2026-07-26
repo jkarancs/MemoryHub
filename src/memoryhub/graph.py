@@ -57,13 +57,22 @@ TYPE_STATUSES: dict[str, tuple[str, ...]] = {
 #: Subnode roles the acting skill needs to read for a node in each status (plan §4.2/§7).
 #: :meth:`Graph.next` resolves each to that role's newest subnode, so one call tells a skill
 #: exactly which documents to ``hub get``.
+#:
+#: The rule: the plan, plus the newest record of every role whose findings the reader must act
+#: on — and nothing else, so an independent check stays independent (a tester never reads a
+#: prior ``test``; a retrying developer reads the findings, not its own old notes). The two
+#: human-gated statuses are the exception: any role can raise them (a ``test`` verdict, a
+#: blocked ``impl``/``fix`` — plan §11.12 — or a previous deferral's ``fdbk``), so the status
+#: does not say who did, and the human reads the node cold. They get the newest of each.
+_HUMAN_GATED_READS = ("plan", "impl", "fix", "test", "fdbk")
+
 STATUS_READS: dict[str, tuple[str, ...]] = {
     "planned": ("plan",),
     "rejected": ("plan", "test"),
-    "needs-fix": ("plan", "fdbk"),
+    "needs-fix": ("plan", "test", "fdbk"),
     "implemented": ("plan", "impl", "fix"),
-    "needs-feedback": ("plan", "test"),
-    "replan": ("plan", "test", "fdbk"),
+    "needs-feedback": _HUMAN_GATED_READS,
+    "replan": _HUMAN_GATED_READS,
 }
 
 #: Frontmatter fields whose values are ids that must resolve to a document in the store.
@@ -205,13 +214,27 @@ class Graph:
 
     # --- queries -------------------------------------------------------------------
 
-    def ready(self, scope_id: str, statuses: Sequence[str] = ACTIONABLE) -> list[MemoryDoc]:
-        """Nodes in the scope whose status is in ``statuses`` and whose dependencies are done."""
+    def ready(
+        self,
+        scope_id: str,
+        statuses: Sequence[str] = ACTIONABLE,
+        *,
+        include_blocked: bool = False,
+    ) -> list[MemoryDoc]:
+        """Nodes in the scope whose status is in ``statuses`` and whose dependencies are done.
+
+        ``include_blocked`` drops the dependency test, which is what a *human* queue wants:
+        ``needs-feedback`` and ``replan`` nodes are waiting on a person, and a person's decision
+        is not blocked by unbuilt code. Without it such a node is invisible until its
+        dependencies land — and a queue that silently hides items is worse than no queue.
+        :meth:`next` deliberately has no such option: it is a claim, and a blocked node is not
+        claimable by any machine role.
+        """
         allowed = set(statuses)
         return [
             node
             for node in self.nodes(scope_id, include_done_supernodes=False)
-            if node.frontmatter.status in allowed and self.deps_met(node)
+            if node.frontmatter.status in allowed and (include_blocked or self.deps_met(node))
         ]
 
     def reads_for(self, node: MemoryDoc) -> list[str]:
