@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from conftest import write_graph_doc
+from conftest import write_graph_doc, write_node, write_subnode
 from memoryhub.cli import app
 from memoryhub.graph import Graph, GraphError
 from memoryhub.hub import Hub
@@ -57,13 +57,7 @@ def test_nodes_follow_the_supernodes_nodes_list(graph: Graph) -> None:
 
 def test_unlisted_nodes_are_appended_id_sorted(graph_repo: Path) -> None:
     for seq in ("05", "04"):
-        write_graph_doc(
-            graph_repo,
-            id=f"demo-hardening-{seq}",
-            type="node",
-            status="planned",
-            extras={"supernode": "demo-hardening"},
-        )
+        write_node(graph_repo, f"demo-hardening-{seq}")
     assert [doc.id for doc in _graph_of(graph_repo).nodes("demo-hardening")] == [
         "demo-hardening-01",
         "demo-hardening-02",
@@ -97,13 +91,19 @@ def test_ready_skips_done_supernodes(graph_repo: Path) -> None:
 
 
 def test_a_superseded_dependency_is_not_done(graph_repo: Path) -> None:
-    write_graph_doc(
+    write_node(
         graph_repo,
-        id="demo-hardening-01",
-        type="node",
+        "demo-hardening-01",
         status="superseded",
-        extras={"supernode": "demo-hardening", "depends_on": "[]"},
+        extras={
+            "subnodes": (
+                "[demo-hardening-01-plan, demo-hardening-01-impl, demo-hardening-01-test, "
+                "demo-hardening-01-plan2]"
+            ),
+            "attempt": 1,
+        },
     )
+    write_subnode(graph_repo, "demo-hardening-01", "plan", "superseded", suffix="plan2")
     assert [doc.id for doc in _graph_of(graph_repo).ready("demo")] == ["demo-commercial-01"]
 
 
@@ -139,13 +139,11 @@ def test_next_on_a_rejected_node_reads_the_plan_and_the_test(graph: Graph) -> No
 
 
 def test_next_reads_the_newest_subnode_of_each_role(graph_repo: Path) -> None:
-    write_graph_doc(
+    write_node(
         graph_repo,
-        id="demo-hardening-04",
-        type="node",
+        "demo-hardening-04",
         status="implemented",
         extras={
-            "supernode": "demo-hardening",
             "subnodes": (
                 "[demo-hardening-04-plan, demo-hardening-04-impl, "
                 "demo-hardening-04-test, demo-hardening-04-impl2]"
@@ -159,13 +157,7 @@ def test_next_reads_the_newest_subnode_of_each_role(graph_repo: Path) -> None:
         ("test", "test", "rejected"),
         ("impl2", "impl", "implemented"),
     ):
-        write_graph_doc(
-            graph_repo,
-            id=f"demo-hardening-04-{suffix}",
-            type="subnode",
-            status="done",
-            extras={"node": "demo-hardening-04", "role": role, "verdict": verdict},
-        )
+        write_subnode(graph_repo, "demo-hardening-04", role, verdict, suffix=suffix)
     payload = _graph_of(graph_repo).next("demo-hardening", ["implemented"])
     assert payload is not None
     # The retry supersedes the first attempt; `fix` has no subnode yet, so it contributes nothing.
@@ -177,13 +169,7 @@ def test_next_returns_none_when_nothing_is_ready(graph: Graph) -> None:
 
 
 def test_repository_is_unknown_when_the_supernode_does_not_resolve(graph_repo: Path) -> None:
-    write_graph_doc(
-        graph_repo,
-        id="demo-orphan",
-        type="node",
-        status="planned",
-        extras={"supernode": "nope"},
-    )
+    write_node(graph_repo, "demo-orphan", extras={"supernode": "nope"})
     orphan = _graph_of(graph_repo)
     assert orphan.repository(orphan.by_id["demo-orphan"]) is None
 
@@ -221,13 +207,7 @@ def test_validate_is_clean_on_a_healthy_graph(graph: Graph) -> None:
 
 
 def test_validate_flags_a_dangling_reference(graph_repo: Path) -> None:
-    write_graph_doc(
-        graph_repo,
-        id="demo-hardening-04",
-        type="node",
-        status="planned",
-        extras={"supernode": "demo-hardening", "depends_on": "[demo-hardening-99]"},
-    )
+    write_node(graph_repo, "demo-hardening-04", extras={"depends_on": "[demo-hardening-99]"})
     assert _problems(_graph_of(graph_repo).validate()) == [
         ("depends_on", "id 'demo-hardening-99' does not resolve")
     ]
@@ -235,15 +215,10 @@ def test_validate_flags_a_dangling_reference(graph_repo: Path) -> None:
 
 def test_validate_flags_a_dependency_cycle(graph_repo: Path) -> None:
     for this, other in (("04", "05"), ("05", "04")):
-        write_graph_doc(
+        write_node(
             graph_repo,
-            id=f"demo-hardening-{this}",
-            type="node",
-            status="planned",
-            extras={
-                "supernode": "demo-hardening",
-                "depends_on": f"[demo-hardening-{other}]",
-            },
+            f"demo-hardening-{this}",
+            extras={"depends_on": f"[demo-hardening-{other}]"},
         )
     problems = _problems(_graph_of(graph_repo).validate())
     assert len(problems) == 1, problems  # one cycle, reported once
@@ -253,42 +228,25 @@ def test_validate_flags_a_dependency_cycle(graph_repo: Path) -> None:
 
 
 def test_validate_reports_a_cycle_once_despite_a_duplicated_edge(graph_repo: Path) -> None:
-    write_graph_doc(
+    write_node(graph_repo, "demo-hardening-04", extras={"depends_on": "[demo-hardening-05]"})
+    write_node(
         graph_repo,
-        id="demo-hardening-04",
-        type="node",
-        status="planned",
-        extras={"supernode": "demo-hardening", "depends_on": "[demo-hardening-05]"},
-    )
-    write_graph_doc(
-        graph_repo,
-        id="demo-hardening-05",
-        type="node",
-        status="planned",
-        extras={
-            "supernode": "demo-hardening",
-            "depends_on": "[demo-hardening-04, demo-hardening-04]",
-        },
+        "demo-hardening-05",
+        extras={"depends_on": "[demo-hardening-04, demo-hardening-04]"},
     )
     problems = _problems(_graph_of(graph_repo).validate())
     assert len(problems) == 1, problems
 
 
 def test_validate_flags_an_edge_into_a_superseded_node(graph_repo: Path) -> None:
-    write_graph_doc(
+    write_node(
         graph_repo,
-        id="demo-hardening-04",
-        type="node",
+        "demo-hardening-04",
         status="superseded",
-        extras={"supernode": "demo-hardening"},
+        extras={"subnodes": "[demo-hardening-04-plan]"},
     )
-    write_graph_doc(
-        graph_repo,
-        id="demo-hardening-05",
-        type="node",
-        status="planned",
-        extras={"supernode": "demo-hardening", "depends_on": "[demo-hardening-04]"},
-    )
+    write_subnode(graph_repo, "demo-hardening-04", "plan", "superseded")
+    write_node(graph_repo, "demo-hardening-05", extras={"depends_on": "[demo-hardening-04]"})
     assert _problems(_graph_of(graph_repo).validate()) == [
         (
             "depends_on",
@@ -298,20 +256,13 @@ def test_validate_flags_an_edge_into_a_superseded_node(graph_repo: Path) -> None
 
 
 def test_validate_flags_status_verdict_drift(graph_repo: Path) -> None:
-    write_graph_doc(
+    write_node(
         graph_repo,
-        id="demo-hardening-04",
-        type="node",
+        "demo-hardening-04",
         status="done",
-        extras={"supernode": "demo-hardening", "subnodes": "[demo-hardening-04-impl]"},
+        extras={"subnodes": "[demo-hardening-04-impl]", "attempt": 1},
     )
-    write_graph_doc(
-        graph_repo,
-        id="demo-hardening-04-impl",
-        type="subnode",
-        status="done",
-        extras={"node": "demo-hardening-04", "role": "impl", "verdict": "implemented"},
-    )
+    write_subnode(graph_repo, "demo-hardening-04", "impl", "implemented")
     assert _problems(_graph_of(graph_repo).validate()) == [
         (
             "status",
@@ -322,38 +273,20 @@ def test_validate_flags_status_verdict_drift(graph_repo: Path) -> None:
 
 
 def test_validate_flags_an_attempt_that_does_not_count_impl_subnodes(graph_repo: Path) -> None:
-    write_graph_doc(
+    write_node(
         graph_repo,
-        id="demo-hardening-04",
-        type="node",
+        "demo-hardening-04",
         status="implemented",
-        extras={
-            "supernode": "demo-hardening",
-            "subnodes": "[demo-hardening-04-impl]",
-            "attempt": 0,
-        },
+        extras={"subnodes": "[demo-hardening-04-impl]"},
     )
-    write_graph_doc(
-        graph_repo,
-        id="demo-hardening-04-impl",
-        type="subnode",
-        status="done",
-        extras={"node": "demo-hardening-04", "role": "impl", "verdict": "implemented"},
-    )
+    write_subnode(graph_repo, "demo-hardening-04", "impl", "implemented")
     assert _problems(_graph_of(graph_repo).validate()) == [
         ("attempt", "attempt is 0 but the node has 1 impl subnode(s)")
     ]
 
 
 def test_validate_flags_an_id_filename_mismatch(graph_repo: Path) -> None:
-    write_graph_doc(
-        graph_repo,
-        filename="demo-hardening-4",
-        id="demo-hardening-04",
-        type="node",
-        status="planned",
-        extras={"supernode": "demo-hardening"},
-    )
+    write_node(graph_repo, "demo-hardening-04", filename="demo-hardening-4")
     assert _problems(_graph_of(graph_repo).validate()) == [
         ("id", "id 'demo-hardening-04' does not match filename demo-hardening-4.md")
     ]
@@ -361,15 +294,54 @@ def test_validate_flags_an_id_filename_mismatch(graph_repo: Path) -> None:
 
 def test_validate_flags_a_status_that_is_illegal_for_the_type(graph_repo: Path) -> None:
     # `planned` is in the store-wide status enum (a node may be planned) but not for a subnode.
+    write_node(graph_repo, "demo-hardening-04", extras={"subnodes": "[demo-hardening-04-plan]"})
     write_graph_doc(
         graph_repo,
-        id="demo-stray",
+        id="demo-hardening-04-plan",
         type="subnode",
         status="planned",
-        extras={"node": "demo-hardening-01", "role": "plan", "verdict": "planned"},
+        extras={"node": "demo-hardening-04", "role": "plan", "verdict": "planned"},
     )
     assert _problems(_graph_of(graph_repo).validate()) == [
         ("status", "status 'planned' is not valid for type 'subnode' (allowed: done)")
+    ]
+
+
+def test_validate_flags_a_missing_required_field(graph_repo: Path) -> None:
+    # No `attempt`: the rejection budget (plan §4.3) would go unchecked on this node.
+    write_graph_doc(
+        graph_repo,
+        id="demo-hardening-04",
+        type="node",
+        status="planned",
+        extras={"supernode": "demo-hardening", "depends_on": "[]", "subnodes": "[]"},
+    )
+    assert _problems(_graph_of(graph_repo).validate()) == [
+        ("attempt", "a node must set 'attempt' (the graph reads it)")
+    ]
+
+
+def test_validate_flags_a_started_node_with_no_work_record(graph_repo: Path) -> None:
+    write_node(graph_repo, "demo-hardening-04", status="implemented", extras={"attempt": 1})
+    assert _problems(_graph_of(graph_repo).validate()) == [
+        (
+            "subnodes",
+            "a 'implemented' node has no subnode — its work record is missing "
+            "(only 'planned' nodes may have none)",
+        ),
+        ("attempt", "attempt is 1 but the node has 0 impl subnode(s)"),
+    ]
+
+
+def test_validate_flags_a_subnode_its_node_does_not_list(graph_repo: Path) -> None:
+    # The crash signature of the write order: the subnode landed, the node never picked it up.
+    write_subnode(graph_repo, "demo-hardening-02", "impl", "implemented")
+    assert _problems(_graph_of(graph_repo).validate()) == [
+        (
+            "node",
+            "node 'demo-hardening-02' does not list this subnode — an interrupted write; "
+            "append it to that node's `subnodes` and set the node's status to 'implemented'",
+        )
     ]
 
 
@@ -461,13 +433,7 @@ def test_cli_validate_ok(in_graph_repo: Path) -> None:
 
 
 def test_cli_validate_reports_and_exits_1(in_graph_repo: Path) -> None:
-    write_graph_doc(
-        in_graph_repo,
-        id="demo-hardening-04",
-        type="node",
-        status="planned",
-        extras={"supernode": "demo-hardening", "depends_on": "[demo-hardening-99]"},
-    )
+    write_node(in_graph_repo, "demo-hardening-04", extras={"depends_on": "[demo-hardening-99]"})
     result = runner.invoke(app, ["graph", "validate", "--json"])
     assert result.exit_code == 1
     report = json.loads(result.output)

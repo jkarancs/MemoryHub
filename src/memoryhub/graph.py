@@ -73,6 +73,21 @@ _REFERENCES: dict[str, tuple[str, ...]] = {
     SUBNODE: ("node",),
 }
 
+#: Fields a type must carry: exactly the ones this traversal reads. An absent field is not a
+#: harmless default — it silently skips the check that would have used it (``attempt`` disables
+#: the rejection budget, ``role`` hides a subnode from ``reads``, ``supernode`` makes a node
+#: unreachable from any scope). Optional by design: ``supersedes`` and ``repository`` (set only
+#: when they apply), ``created_by`` (a store convention, load-bearing for nothing here), and
+#: ``project.repository`` (empty for cross-repo projects).
+_REQUIRED: dict[str, tuple[str, ...]] = {
+    SUPERNODE: ("project", "nodes"),
+    NODE: ("supernode", "depends_on", "subnodes", "attempt"),
+    SUBNODE: ("node", "role", "verdict"),
+}
+
+#: The one node status that legitimately has no work record yet — everything else is mid-loop.
+_UNSTARTED = "planned"
+
 #: Supernode walk order inside a project scope: started work before unstarted, finished last.
 #: (Build order across supernodes isn't otherwise encoded; between nodes it is — ``depends_on``.)
 _SUPERNODE_ORDER = {"in-progress": 0, "planned": 1, DONE: 2}
@@ -282,16 +297,20 @@ class Graph:
 
         Dangling references · dependency cycles · edges into ``superseded`` nodes · node status
         vs the newest subnode's ``verdict`` · ``attempt`` vs the number of ``impl`` subnodes ·
-        id/filename agreement · per-type status validity.
+        id/filename agreement · per-type status validity · per-type required fields · a work
+        record for every started node · subnodes their node actually lists.
         """
         issues: list[ValidationIssue] = []
         for doc in self.docs:
             issues += self._check_filename(doc)
             issues += self._check_status(doc)
+            issues += self._check_required(doc)
             issues += self._check_references(doc)
         for node in self._of_type(NODE):
             issues += self._check_superseded_deps(node)
             issues += self._check_history(node)
+        for sub in self._of_type(SUBNODE):
+            issues += self._check_attachment(sub)
         issues += self._check_cycles()
         return StoreReport(issues=issues, warnings=[], checked=len(self.docs))
 
@@ -313,6 +332,16 @@ class Graph:
                 f"status {status!r} is not valid for type {doc.type!r} "
                 f"(allowed: {', '.join(allowed)})",
             )
+        ]
+
+    def _check_required(self, doc: MemoryDoc) -> list[ValidationIssue]:
+        """Fields the traversal reads must be present — see :data:`_REQUIRED`."""
+        return [
+            ValidationIssue(
+                doc.path, field, f"a {doc.type} must set {field!r} (the graph reads it)"
+            )
+            for field in _REQUIRED.get(doc.type, ())
+            if doc.frontmatter.extra.get(field) is None
         ]
 
     def _check_references(self, doc: MemoryDoc) -> list[ValidationIssue]:
@@ -338,18 +367,53 @@ class Graph:
                 )
         return issues
 
+    def _check_attachment(self, sub: MemoryDoc) -> list[ValidationIssue]:
+        """A subnode must appear in its node's ``subnodes`` list, or nothing can see it.
+
+        This is the crash signature the write order predicts (plan §10: subnode first, node
+        status last). The record exists and names its node, but the node never picked it up —
+        so it is invisible to ``next``, to ``reads``, and to the status/verdict check. The
+        repair is mechanical, hence the instruction in the message.
+        """
+        node = self._typed(_ref(sub, NODE) or "", NODE)
+        if node is None or sub.id in _refs(node, "subnodes"):
+            return []  # unresolvable/absent `node` is already reported by the other checks
+        verdict = sub.frontmatter.extra.get("verdict")
+        return [
+            ValidationIssue(
+                sub.path,
+                NODE,
+                f"node {node.id!r} does not list this subnode — an interrupted write; append it "
+                f"to that node's `subnodes` and set the node's status to {verdict!r}",
+            )
+        ]
+
     def _check_history(self, node: MemoryDoc) -> list[ValidationIssue]:
-        """Node status must equal its newest subnode's verdict; ``attempt`` counts impl subnodes."""
+        """Node status must equal its newest subnode's verdict; ``attempt`` counts impl subnodes.
+
+        A node past ``planned`` must also *have* a work record: every other status is one an
+        agent reached by writing a subnode.
+        """
         issues = []
         subnodes = self.subnodes(node)
+        status = node.frontmatter.status
+        if not subnodes and status != _UNSTARTED:
+            issues.append(
+                ValidationIssue(
+                    node.path,
+                    "subnodes",
+                    f"a {status!r} node has no subnode — its work record is missing "
+                    f"(only {_UNSTARTED!r} nodes may have none)",
+                )
+            )
         if subnodes:
             verdict = subnodes[-1].frontmatter.extra.get("verdict")
-            if verdict != node.frontmatter.status:
+            if verdict != status:
                 issues.append(
                     ValidationIssue(
                         node.path,
                         "status",
-                        f"status {node.frontmatter.status!r} does not match the verdict "
+                        f"status {status!r} does not match the verdict "
                         f"{verdict!r} of its newest subnode {subnodes[-1].id!r}",
                     )
                 )

@@ -168,15 +168,23 @@ def workflow_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _graph_node(repo: Path, id: str, **kwargs: Any) -> None:
-    extras = {"supernode": id.rsplit("-", 1)[0], **kwargs.pop("extras", {})}
-    write_graph_doc(repo, id=id, type="node", extras=extras, **kwargs)
+def write_node(repo: Path, id: str, status: str = "planned", **kwargs: Any) -> Path:
+    """A node carrying every field `hub graph validate` requires; ``extras`` overrides any."""
+    extras = {
+        "supernode": id.rsplit("-", 1)[0],
+        "depends_on": "[]",
+        "subnodes": "[]",
+        "attempt": 0,
+        **kwargs.pop("extras", {}),
+    }
+    return write_graph_doc(repo, id=id, type="node", status=status, extras=extras, **kwargs)
 
 
-def _graph_subnode(repo: Path, node: str, role: str, verdict: str) -> None:
-    write_graph_doc(
+def write_subnode(repo: Path, node: str, role: str, verdict: str, suffix: str = "") -> Path:
+    """A subnode of ``node``, id ``<node>-<suffix or role>`` (repeated roles take a suffix)."""
+    return write_graph_doc(
         repo,
-        id=f"{node}-{role}",
+        id=f"{node}-{suffix or role}",
         type="subnode",
         status="done",
         extras={"node": node, "role": role, "verdict": verdict},
@@ -213,36 +221,34 @@ def graph_repo(workflow_repo: Path) -> Path:
         extras={"project": "demo", "nodes": "[demo-commercial-01]"},
     )
 
-    _graph_node(
+    write_node(
         workflow_repo,
         "demo-hardening-01",
         status="done",
         extras={
-            "depends_on": "[]",
             "subnodes": "[demo-hardening-01-plan, demo-hardening-01-impl, demo-hardening-01-test]",
             "attempt": 1,
         },
     )
-    _graph_subnode(workflow_repo, "demo-hardening-01", "plan", "planned")
-    _graph_subnode(workflow_repo, "demo-hardening-01", "impl", "implemented")
-    _graph_subnode(workflow_repo, "demo-hardening-01", "test", "done")
+    write_subnode(workflow_repo, "demo-hardening-01", "plan", "planned")
+    write_subnode(workflow_repo, "demo-hardening-01", "impl", "implemented")
+    write_subnode(workflow_repo, "demo-hardening-01", "test", "done")
 
     for seq, dep in (("02", "demo-hardening-01"), ("03", "demo-hardening-02")):
         node = f"demo-hardening-{seq}"
-        _graph_node(
+        write_node(
             workflow_repo,
             node,
             status="planned",
-            extras={"depends_on": f"[{dep}]", "subnodes": f"[{node}-plan]", "attempt": 0},
+            extras={"depends_on": f"[{dep}]", "subnodes": f"[{node}-plan]"},
         )
-        _graph_subnode(workflow_repo, node, "plan", "planned")
+        write_subnode(workflow_repo, node, "plan", "planned")
 
-    _graph_node(
+    write_node(
         workflow_repo,
         "demo-commercial-01",
         status="rejected",
         extras={
-            "depends_on": "[]",
             "subnodes": (
                 "[demo-commercial-01-plan, demo-commercial-01-impl, demo-commercial-01-test]"
             ),
@@ -250,9 +256,9 @@ def graph_repo(workflow_repo: Path) -> Path:
             "repository": "DemoSite",
         },
     )
-    _graph_subnode(workflow_repo, "demo-commercial-01", "plan", "planned")
-    _graph_subnode(workflow_repo, "demo-commercial-01", "impl", "implemented")
-    _graph_subnode(workflow_repo, "demo-commercial-01", "test", "rejected")
+    write_subnode(workflow_repo, "demo-commercial-01", "plan", "planned")
+    write_subnode(workflow_repo, "demo-commercial-01", "impl", "implemented")
+    write_subnode(workflow_repo, "demo-commercial-01", "test", "rejected")
     return workflow_repo
 
 
