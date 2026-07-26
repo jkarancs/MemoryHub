@@ -23,6 +23,7 @@ from . import loader, query, writer
 from .bundle import Bundle
 from .config import Config, load_config
 from .embeddings import EmbeddingError, content_hash
+from .graph import Graph
 from .index import IndexWarning, ReindexStats, VectorIndex
 from .loader import StoreReport
 from .models import MemoryDoc
@@ -93,6 +94,14 @@ class Hub:
     def validate(self) -> StoreReport:
         """Full-store validation report (issues + unresolved-``related`` warnings)."""
         return loader.validate_store(self.config)
+
+    def graph(self) -> Graph:
+        """A dependency-graph view of the store — see :mod:`memoryhub.graph`.
+
+        Serves ``hub graph next/ready/status/validate`` over a ``workflow``-profile store. The
+        returned :class:`~memoryhub.graph.Graph` is a snapshot of the docs as of this call.
+        """
+        return Graph(self.all(), self.profile)
 
     # --- writes ------------------------------------------------------------------
 

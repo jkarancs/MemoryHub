@@ -28,9 +28,10 @@ from .bundle import Bundle
 from .config import ConfigError, load_config
 from .embeddings import EmbeddingError
 from .export import ExportError
+from .graph import ACTIONABLE, NODE, TYPE_STATUSES, Graph, GraphError
 from .hub import Hub
 from .index import IndexWarning
-from .loader import LoadError, flat_frontmatter, serialize
+from .loader import LoadError, StoreReport, flat_frontmatter, serialize
 from .models import MemoryDoc, frontmatter_json_schema
 from .profiles import Profile, load_profile
 from .writer import WriteError, WriteWarning
@@ -43,6 +44,11 @@ app = typer.Typer(
 )
 schema_app = typer.Typer(help="Schema tooling.", no_args_is_help=True)
 app.add_typer(schema_app, name="schema")
+graph_app = typer.Typer(
+    help="Dependency-graph queries over a workflow store (see memoryhub.graph).",
+    no_args_is_help=True,
+)
+app.add_typer(graph_app, name="graph")
 
 
 def _force_utf8_streams() -> None:
@@ -87,7 +93,7 @@ def _echo_json(payload: Any) -> None:
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
-def _doc_summary(doc: MemoryDoc, profile: Profile) -> dict[str, Any]:
+def _doc_summary(doc: MemoryDoc, profile: Profile | None) -> dict[str, Any]:
     summary = flat_frontmatter(doc.frontmatter, profile)
     summary["path"] = str(doc.path) if doc.path else None
     return summary
@@ -396,6 +402,27 @@ def reindex_cmd(
     typer.secho(str(stats), fg=typer.colors.GREEN)
 
 
+def _emit_report(report: StoreReport, json_out: bool, ok_message: str) -> None:
+    """Print a validation report (issues, then warnings) and exit non-zero if it failed."""
+    if json_out:
+        _echo_json(report.to_dict())
+    else:
+        for issue in report.issues:
+            typer.secho(str(issue), fg=typer.colors.RED, err=True)
+        for warning in report.warnings:
+            typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
+        if report.ok:
+            typer.secho(ok_message, fg=typer.colors.GREEN)
+        else:
+            typer.secho(
+                f"FAILED: {len(report.issues)} problem(s) across {report.checked} file(s)",
+                fg=typer.colors.RED,
+                err=True,
+            )
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
 @app.command("validate")
 def validate_cmd(
     json_out: bool = typer.Option(False, "--json", help="Emit the aggregated report as JSON."),
@@ -407,23 +434,125 @@ def validate_cmd(
     """
     hub = _open_hub()
     report = hub.validate()
+    _emit_report(report, json_out, f"OK: {report.checked} file(s) valid")
+
+
+# --- graph -----------------------------------------------------------------------
+
+
+def _open_graph() -> Graph:
+    hub = _open_hub()
+    try:
+        return hub.graph()
+    except LoadError as exc:
+        _fail(str(exc))
+
+
+def _statuses(option: str | None) -> list[str]:
+    return _split_csv(option) or list(ACTIONABLE)
+
+
+def _counts_line(counts: dict[str, int]) -> str:
+    """`done 5 · planned 2`, in node-lifecycle order."""
+    order = {name: i for i, name in enumerate(TYPE_STATUSES[NODE])}
+    items = sorted(counts.items(), key=lambda kv: (order.get(kv[0], len(order)), kv[0]))
+    return " · ".join(f"{name} {count}" for name, count in items) or "(no nodes)"
+
+
+@graph_app.command("next")
+def graph_next_cmd(
+    scope: str = typer.Argument(..., help="Project or supernode id."),
+    status: str | None = typer.Option(
+        None, "--status", help="Comma-separated node statuses (default: every actionable one)."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit the payload as JSON."),
+) -> None:
+    """The single next actionable node in SCOPE, with the subnodes the acting skill needs.
+
+    A ready node is one whose status matches and whose every `depends_on` id is `done`. An idle
+    scope is not an error: it prints `null` (`--json`) and exits 0.
+    """
+    graph = _open_graph()
+    try:
+        payload = graph.next(scope, _statuses(status))
+    except GraphError as exc:
+        _fail(str(exc))
     if json_out:
-        _echo_json(report.to_dict())
+        _echo_json(payload)
+        return
+    if payload is None:
+        typer.secho("(nothing ready)", dim=True)
+        return
+    node = payload["node"]
+    typer.secho(f"{node['id']}  {node['status']}  {node['title']}", fg=typer.colors.GREEN)
+    typer.echo(f"  supernode:  {payload['supernode']}")
+    typer.echo(f"  repository: {payload['repository']}")
+    typer.echo(f"  reads:      {', '.join(payload['reads']) or '(none)'}")
+
+
+@graph_app.command("ready")
+def graph_ready_cmd(
+    scope: str = typer.Argument(..., help="Project or supernode id."),
+    status: str | None = typer.Option(
+        None, "--status", help="Comma-separated node statuses (default: every actionable one)."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit the nodes as JSON."),
+) -> None:
+    """Every ready node in SCOPE, in walk order (`next` returns the first of these)."""
+    graph = _open_graph()
+    try:
+        docs = graph.ready(scope, _statuses(status))
+    except GraphError as exc:
+        _fail(str(exc))
+    if json_out:
+        _echo_json([_doc_summary(doc, graph.profile) for doc in docs])
     else:
-        for issue in report.issues:
-            typer.secho(str(issue), fg=typer.colors.RED, err=True)
-        for warning in report.warnings:
-            typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
-        if report.ok:
-            typer.secho(f"OK: {report.checked} file(s) valid", fg=typer.colors.GREEN)
-        else:
-            typer.secho(
-                f"FAILED: {len(report.issues)} problem(s) across {report.checked} file(s)",
-                fg=typer.colors.RED,
-                err=True,
-            )
-    if not report.ok:
-        raise typer.Exit(code=1)
+        _print_table(docs)
+
+
+@graph_app.command("status")
+def graph_status_cmd(
+    scope: str = typer.Argument(..., help="Project or supernode id."),
+    json_out: bool = typer.Option(False, "--json", help="Emit the counts as JSON."),
+) -> None:
+    """Node counts by status, per supernode — the PROGRESS.md replacement."""
+    graph = _open_graph()
+    try:
+        report = graph.status(scope)
+    except GraphError as exc:
+        _fail(str(exc))
+    if json_out:
+        _echo_json(report)
+        return
+    typer.secho(
+        f"{report['scope']}  ({report['type']}, {report['status']})  {report['title']}", bold=True
+    )
+    id_w = max([len(row["id"]) for row in report["supernodes"]] + [len("TOTAL")])
+    for row in report["supernodes"]:
+        typer.echo(
+            f"  {row['id']:<{id_w}}  {row['status']:<12}  {row['total']:>3} nodes  "
+            f"{row['ready']:>3} ready   {_counts_line(row['counts'])}"
+        )
+    typer.secho(
+        f"  {'TOTAL':<{id_w}}  {'':<12}  {report['total']:>3} nodes  "
+        f"{report['ready']:>3} ready   {_counts_line(report['counts'])}",
+        fg=typer.colors.CYAN,
+    )
+
+
+@graph_app.command("validate")
+def graph_validate_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Emit the aggregated report as JSON."),
+) -> None:
+    """Check the graph invariants; exits non-zero on any problem.
+
+    Dangling references, dependency cycles, edges into superseded nodes, node status vs the
+    newest subnode's verdict, `attempt` vs impl-subnode count, id/filename agreement, and
+    per-type status validity (the profile can only declare one store-wide status enum).
+    """
+    graph = _open_graph()
+    report = graph.validate()
+    _emit_report(report, json_out, f"OK: {report.checked} document(s), graph invariants hold")
 
 
 # --- export ----------------------------------------------------------------------

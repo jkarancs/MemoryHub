@@ -9,6 +9,7 @@ from .bundle import Bundle, BundleItem, Excluded
 from .config import Config, ConfigError, load_config
 from .embeddings import Embedder, EmbeddingError, get_embedder
 from .export import ExportError, ExportReport, ScanHit
+from .graph import Graph, GraphError
 from .hub import Hub
 from .index import IndexWarning, ReindexStats, VectorIndex
 from .loader import LoadError, StoreReport, ValidationIssue
@@ -37,6 +38,8 @@ __all__ = [
     "ExportError",
     "ExportReport",
     "ScanHit",
+    "Graph",
+    "GraphError",
     "VectorIndex",
     "IndexWarning",
     "ReindexStats",

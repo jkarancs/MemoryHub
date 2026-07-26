@@ -64,6 +64,29 @@ defaults:
   visibility: private
 """
 
+#: The real development-graph profile (mirrors ``../agent-memory/workflow.yaml``): four nested
+#: types, and one store-wide ``status`` enum that is the union of their four vocabularies — which
+#: is why per-type status validity is a `hub graph validate` invariant, not a schema check.
+WORKFLOW_PROFILE_YAML = """\
+name: workflow
+types:
+  project: {fields: [repository]}
+  supernode: {fields: [project, nodes, created_by]}
+  node:
+    fields: [supernode, depends_on, subnodes, attempt, supersedes, repository, created_by]
+  subnode: {fields: [node, role, verdict, created_by]}
+common_required: [id, title, type, description, tags, status, visibility, created, updated]
+enums:
+  status: [active, paused, planned, in-progress, implemented, rejected, needs-fix,
+           needs-feedback, replan, done, superseded]
+  visibility: [private]
+  role: [plan, impl, test, fdbk, fix]
+  verdict: [planned, implemented, rejected, needs-fix, needs-feedback, replan, done, superseded]
+defaults:
+  status: planned
+  visibility: private
+"""
+
 
 def memory_text(
     *,
@@ -123,6 +146,114 @@ def custom_profile_repo(tmp_path: Path) -> Path:
     (tmp_path / "workflow.yaml").write_text(CUSTOM_PROFILE_YAML, encoding="utf-8")
     (tmp_path / "graph").mkdir()
     return tmp_path
+
+
+def write_graph_doc(repo: Path, filename: str | None = None, **kwargs: Any) -> Path:
+    """Write a workflow document into ``repo/graph/<type>/<id>.md`` and return its path.
+
+    ``filename`` overrides the stem, so a store can be given an id/filename mismatch on purpose.
+    """
+    path = repo / "graph" / kwargs["type"] / f"{filename or kwargs['id']}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(memory_text(**kwargs), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def workflow_repo(tmp_path: Path) -> Path:
+    """An empty content repo on the development-graph (``workflow``) profile."""
+    (tmp_path / "hub.toml").write_text(CUSTOM_HUB_TOML, encoding="utf-8")
+    (tmp_path / "workflow.yaml").write_text(WORKFLOW_PROFILE_YAML, encoding="utf-8")
+    (tmp_path / "graph").mkdir()
+    return tmp_path
+
+
+def _graph_node(repo: Path, id: str, **kwargs: Any) -> None:
+    extras = {"supernode": id.rsplit("-", 1)[0], **kwargs.pop("extras", {})}
+    write_graph_doc(repo, id=id, type="node", extras=extras, **kwargs)
+
+
+def _graph_subnode(repo: Path, node: str, role: str, verdict: str) -> None:
+    write_graph_doc(
+        repo,
+        id=f"{node}-{role}",
+        type="subnode",
+        status="done",
+        extras={"node": node, "role": role, "verdict": verdict},
+    )
+
+
+@pytest.fixture
+def graph_repo(workflow_repo: Path) -> Path:
+    """A small but complete development graph: one project, two supernodes, four nodes.
+
+    ``demo-hardening`` is ``in-progress`` and ``demo-commercial`` merely ``planned``, so the
+    project walk order is the reverse of the id order — that's the "started work first" rule.
+    Its 01 is done, 02 is ready behind it, 03 is blocked behind 02; the commercial node is
+    ``rejected`` (so it needs its plan *and* its test) and overrides ``repository``.
+    """
+    write_graph_doc(
+        workflow_repo, id="demo", type="project", status="active", extras={"repository": "Demo"}
+    )
+    write_graph_doc(
+        workflow_repo,
+        id="demo-hardening",
+        type="supernode",
+        status="in-progress",
+        extras={
+            "project": "demo",
+            "nodes": "[demo-hardening-01, demo-hardening-02, demo-hardening-03]",
+        },
+    )
+    write_graph_doc(
+        workflow_repo,
+        id="demo-commercial",
+        type="supernode",
+        status="planned",
+        extras={"project": "demo", "nodes": "[demo-commercial-01]"},
+    )
+
+    _graph_node(
+        workflow_repo,
+        "demo-hardening-01",
+        status="done",
+        extras={
+            "depends_on": "[]",
+            "subnodes": "[demo-hardening-01-plan, demo-hardening-01-impl, demo-hardening-01-test]",
+            "attempt": 1,
+        },
+    )
+    _graph_subnode(workflow_repo, "demo-hardening-01", "plan", "planned")
+    _graph_subnode(workflow_repo, "demo-hardening-01", "impl", "implemented")
+    _graph_subnode(workflow_repo, "demo-hardening-01", "test", "done")
+
+    for seq, dep in (("02", "demo-hardening-01"), ("03", "demo-hardening-02")):
+        node = f"demo-hardening-{seq}"
+        _graph_node(
+            workflow_repo,
+            node,
+            status="planned",
+            extras={"depends_on": f"[{dep}]", "subnodes": f"[{node}-plan]", "attempt": 0},
+        )
+        _graph_subnode(workflow_repo, node, "plan", "planned")
+
+    _graph_node(
+        workflow_repo,
+        "demo-commercial-01",
+        status="rejected",
+        extras={
+            "depends_on": "[]",
+            "subnodes": (
+                "[demo-commercial-01-plan, demo-commercial-01-impl, demo-commercial-01-test]"
+            ),
+            "attempt": 1,
+            "repository": "DemoSite",
+        },
+    )
+    _graph_subnode(workflow_repo, "demo-commercial-01", "plan", "planned")
+    _graph_subnode(workflow_repo, "demo-commercial-01", "impl", "implemented")
+    _graph_subnode(workflow_repo, "demo-commercial-01", "test", "rejected")
+    return workflow_repo
 
 
 @pytest.fixture

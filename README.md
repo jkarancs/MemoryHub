@@ -78,6 +78,7 @@ src/memoryhub/
 ├── models.py         Pydantic: MemoryDoc, Frontmatter, JSON-schema builder
 ├── loader.py         parse/serialize markdown+frontmatter, validate
 ├── query.py          frontmatter filtering + full-text
+├── graph.py          dependency-graph traversal for workflow stores (`hub graph`)
 ├── writer.py         add/update/delete memory files (atomic, guarded)
 ├── hub.py            Hub facade — the single engine everything calls
 ├── ids.py            slug/id generation + uniqueness
