@@ -186,6 +186,16 @@ def test_serialize_shuffled_input_normalizes_ordering(tmp_path: Path) -> None:
     assert serialized.rindex("source:") > serialized.rindex("related:")
 
 
+def test_serialize_never_emits_yaml_aliases(tmp_path: Path) -> None:
+    text = memory_text(id="bio-y", type="bio", created="2026-01-01", updated="2026-01-01")
+    path = tmp_path / "bio-y.md"
+    path.write_text(text, encoding="utf-8")
+    serialized = loader.serialize(loader.load_one(path, PROFILE), PROFILE)
+    assert "&id" not in serialized and "*id" not in serialized  # not `created: &id001 ...`
+    assert "created: 2026-01-01" in serialized
+    assert "updated: 2026-01-01" in serialized
+
+
 def test_serialize_empty_body(tmp_path: Path) -> None:
     text = memory_text(id="bio-x", type="bio", body="")
     path = tmp_path / "bio-x.md"

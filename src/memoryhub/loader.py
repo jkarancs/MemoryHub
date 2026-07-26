@@ -40,6 +40,18 @@ _TRAILING_FIELDS = ("related", "source")
 _MODEL_FIELDS = frozenset(_COMMON_FIELDS) | frozenset(_TRAILING_FIELDS)
 
 
+class _NoAliasDumper(yaml.SafeDumper):
+    """A dumper that never emits anchors/aliases.
+
+    Without this, PyYAML collapses repeated values — most visibly ``created``/``updated`` on a
+    freshly written file — into ``created: &id001 2026-07-26`` + ``updated: *id001``. That is valid
+    YAML but unreadable, and frontmatter parsers outside PyYAML (Obsidian's, for one) choke on it.
+    """
+
+    def ignore_aliases(self, data: Any) -> bool:
+        return True
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     """One problem found while loading/validating a store: which file, which field, why."""
@@ -263,8 +275,9 @@ def serialize(doc: MemoryDoc, profile: Profile | None = None) -> str:
     Always UTF-8-safe text with ``\\n`` newlines regardless of platform or input line endings.
     """
     data = flat_frontmatter(doc.frontmatter, profile)
-    yaml_text = yaml.safe_dump(
+    yaml_text = yaml.dump(
         data,
+        Dumper=_NoAliasDumper,
         sort_keys=False,
         allow_unicode=True,
         default_flow_style=None,  # scalar lists inline: `tags: [python, async]`
