@@ -100,6 +100,16 @@ class Config(BaseModel):
         return (self._base / self.hub.content_root).resolve()
 
     @property
+    def profile_ref(self) -> str | Path:
+        """The profile to load: a built-in name, or a path resolved against ``hub.toml``'s dir.
+
+        Paths in ``hub.toml`` are relative to the file, not to the caller's cwd — otherwise a
+        content repo with its own profile YAML would only work when ``hub`` runs from its root.
+        """
+        candidate = (self._base / self.hub.profile).resolve()
+        return candidate if candidate.is_file() else self.hub.profile
+
+    @property
     def index_path(self) -> Path:
         """Absolute path to the (Phase 3) vector index, resolved against ``hub.toml``."""
         return (self._base / self.index.path).resolve()

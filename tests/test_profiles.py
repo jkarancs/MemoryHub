@@ -27,6 +27,7 @@ def test_load_builtin_personal() -> None:
     assert profile.is_known_type("goal")
     assert not profile.is_known_type("nope")
     assert profile.enums["visibility"] == ["public", "private"]
+    assert profile.defaults == {}  # writes fall back to the engine's draft/private
 
 
 def test_personal_is_listed_as_builtin() -> None:
@@ -53,6 +54,23 @@ def test_load_profile_from_path(tmp_path: Path) -> None:
     profile = load_profile(custom)
     assert profile.name == "work"
     assert profile.fields_for("meeting") == ["attendees"]
+
+
+def test_profile_carries_write_defaults(tmp_path: Path) -> None:
+    custom = tmp_path / "workflow.yaml"
+    custom.write_text(
+        "name: workflow\n"
+        "types:\n"
+        "  node: {fields: []}\n"
+        "enums:\n"
+        "  status: [planned, done]\n"
+        "defaults:\n"
+        "  status: planned\n"
+        "  visibility: private\n",
+        encoding="utf-8",
+    )
+    profile = load_profile(custom)
+    assert profile.defaults == {"status": "planned", "visibility": "private"}
 
 
 def test_malformed_profile_rejected(tmp_path: Path) -> None:

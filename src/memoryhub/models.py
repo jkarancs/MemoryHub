@@ -3,6 +3,11 @@
 ``Frontmatter`` models the YAML frontmatter block of a memory file; ``MemoryDoc`` couples it with
 the markdown body and source path. Type-specific ("extra") fields are held in ``extra`` — the
 loader (Phase 1) routes flat frontmatter keys into it based on the active profile.
+
+Closed vocabularies belong to the profile, not the model: ``type``, ``status``, ``visibility`` and
+any other field a profile lists under ``enums`` are typed loosely here and checked against the
+active profile by :func:`validate_against_profile`. That keeps a non-personal deployment (e.g. the
+``workflow`` profile, whose statuses are ``planned``/``implemented``/…) a YAML file away.
 """
 
 from __future__ import annotations
@@ -10,7 +15,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -19,16 +24,14 @@ from .profiles import Profile
 #: IDs are slugs: lowercase alphanumerics and hyphens, not starting with a hyphen.
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-Status = Literal["active", "archived", "draft", "aspirational"]
-Visibility = Literal["public", "private"]
-
 
 class Frontmatter(BaseModel):
     """Validated frontmatter for a single memory file.
 
     Common fields are declared explicitly; type-specific fields (per the active profile) live in
-    ``extra``. Profile-aware checks (is ``type`` in the vocab? are the ``extra`` keys permitted?)
-    are applied via :func:`validate_against_profile`, since the base model has no profile context.
+    ``extra``. Profile-aware checks (is ``type`` in the vocab? are the ``extra`` keys permitted?
+    are enum-constrained values inside their enum?) are applied via
+    :func:`validate_against_profile`, since the base model has no profile context.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -38,8 +41,9 @@ class Frontmatter(BaseModel):
     type: str
     description: str
     tags: list[str] = Field(default_factory=list)
-    status: Status
-    visibility: Visibility
+    #: Vocabulary comes from the profile (``enums``), not the model — see the module docstring.
+    status: str
+    visibility: str
     created: date
     updated: date
     related: list[str] = Field(default_factory=list)
@@ -81,14 +85,43 @@ class MemoryDoc(BaseModel):
         return self.frontmatter.type
 
 
+#: Frontmatter keys that are model fields; everything else is a type-specific extra.
+_MODEL_FIELD_NAMES = frozenset(Frontmatter.model_fields) - {"extra"}
+
+
+def _enum_problems(fm: Frontmatter, profile: Profile) -> list[str]:
+    """Values that fall outside an enum the profile declares (model field or type-specific extra).
+
+    A profile entry for a field the document doesn't carry is simply not checked, so an enum on an
+    optional extra (say a subnode's ``role``) constrains the docs that use it without requiring it.
+    """
+    problems: list[str] = []
+    for field, allowed in profile.enums.items():
+        if field in _MODEL_FIELD_NAMES:
+            value = getattr(fm, field)
+        elif field in fm.extra:
+            value = fm.extra[field]
+        else:
+            continue
+        for item in value if isinstance(value, list) else [value]:
+            if item not in allowed:
+                problems.append(
+                    f"{field} {item!r} is not in profile {profile.name!r} "
+                    f"(allowed: {', '.join(str(option) for option in allowed)})"
+                )
+    return problems
+
+
 def validate_against_profile(fm: Frontmatter, profile: Profile) -> list[str]:
     """Return a list of human-readable problems for ``fm`` under ``profile`` (empty == valid).
 
     Checks that are profile-dependent and therefore cannot live on the model itself:
+      * every value constrained by a profile ``enums`` entry (``status``, ``visibility``, …) is
+        inside that enum.
       * ``type`` is part of the profile's closed vocabulary.
       * every key in ``extra`` is an allowed type-specific field for that type.
     """
-    problems: list[str] = []
+    problems: list[str] = _enum_problems(fm, profile)
     if not profile.is_known_type(fm.type):
         problems.append(
             f"type {fm.type!r} is not in profile {profile.name!r} "

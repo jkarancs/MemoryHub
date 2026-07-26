@@ -163,7 +163,7 @@ def _resolve_profile(profile_opt: str | None) -> Profile:
         config = load_config(Path.cwd())
     except ConfigError:
         return load_profile("personal")
-    return load_profile(config.hub.profile)
+    return load_profile(config.profile_ref)
 
 
 # --- schema --------------------------------------------------------------------
@@ -492,7 +492,10 @@ def new_cmd(
             tags=_split_csv(tags) or [],
             body=f"TODO: describe this {type}.",
         )
-    typer.secho(f"Created {doc.id} at {doc.path} (status: draft)", fg=typer.colors.GREEN)
+    typer.secho(
+        f"Created {doc.id} at {doc.path} (status: {doc.frontmatter.status})",
+        fg=typer.colors.GREEN,
+    )
     extras = hub.profile.fields_for(type)
     if extras:
         typer.echo(f"Type-specific fields you can add: {', '.join(extras)}")
@@ -504,8 +507,12 @@ def add_cmd(
     title: str = typer.Option(..., "--title"),
     description: str = typer.Option("", "--description"),
     tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
-    status: str | None = typer.Option(None, "--status", help="Defaults to 'draft'."),
-    visibility: str | None = typer.Option(None, "--visibility", help="Defaults to 'private'."),
+    status: str | None = typer.Option(
+        None, "--status", help="Defaults to the profile's default status (else 'draft')."
+    ),
+    visibility: str | None = typer.Option(
+        None, "--visibility", help="Defaults to the profile's default visibility (else 'private')."
+    ),
     related: str | None = typer.Option(None, "--related", help="Comma-separated related ids."),
     set_: list[str] | None = typer.Option(
         None, "--set", help="Extra field as key=value (repeatable; YAML-typed values)."

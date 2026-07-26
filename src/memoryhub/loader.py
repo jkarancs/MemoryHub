@@ -158,7 +158,7 @@ def iter_store_paths(content_root: Path) -> list[Path]:
 
 def _load_store(config: Config) -> tuple[list[MemoryDoc], list[ValidationIssue], int]:
     """Load every file, collecting docs + issues (duplicate ids included). Never raises."""
-    profile = load_profile(config.hub.profile)
+    profile = load_profile(config.profile_ref)
     root = config.content_root
     if not root.is_dir():
         issue = ValidationIssue(None, "content_root", f"content root {root} does not exist")

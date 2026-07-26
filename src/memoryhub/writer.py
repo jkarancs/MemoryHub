@@ -129,11 +129,12 @@ def add(config: Config, frontmatter_fields: dict[str, Any], body: str) -> Memory
     """Create a new memory file (generate/validate id, set created/updated, atomic write).
 
     An explicit ``id`` that already exists hard-fails; a generated one (from ``type`` + ``title``)
-    is suffixed to uniqueness. ``status`` defaults to ``draft`` and ``visibility`` to ``private``
-    (safe defaults — flipping to active/public is a deliberate act).
+    is suffixed to uniqueness. ``status``/``visibility`` fall back to the profile's ``defaults``,
+    and without those to ``draft``/``private`` (safe defaults — flipping to active/public is a
+    deliberate act).
     """
     _check_policy(config, "add")
-    profile = load_profile(config.hub.profile)
+    profile = load_profile(config.profile_ref)
 
     supplied = dict(frontmatter_fields)
     type_ = supplied.get("type")
@@ -157,8 +158,8 @@ def add(config: Config, frontmatter_fields: dict[str, Any], body: str) -> Memory
     today = date.today()
     supplied.setdefault("created", today)
     supplied.setdefault("updated", today)
-    supplied.setdefault("status", "draft")
-    supplied.setdefault("visibility", "private")
+    supplied.setdefault("status", profile.defaults.get("status", "draft"))
+    supplied.setdefault("visibility", profile.defaults.get("visibility", "private"))
     supplied.setdefault("description", "")
 
     known, extra = split_fields(supplied)
@@ -194,7 +195,7 @@ def update(
     sets it explicitly.
     """
     _check_policy(config, f"update {id!r}")
-    profile = load_profile(config.hub.profile)
+    profile = load_profile(config.profile_ref)
 
     path = _find_existing(config, id)
     doc = load_one(path, profile)

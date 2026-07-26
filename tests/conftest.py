@@ -36,6 +36,35 @@ path = ".index"
 """
 
 
+CUSTOM_HUB_TOML = """\
+[hub]
+name = "custom"
+content_root = "./graph"
+profile = "./workflow.yaml"
+
+[write]
+allow_agent_writes = true
+require_confirmation = false
+"""
+
+#: A non-personal profile: its own type, its own status vocabulary, an enum on a type-specific
+#: field, and write defaults — the "new deployment is a new YAML file" seam.
+CUSTOM_PROFILE_YAML = """\
+name: workflow
+types:
+  node: {fields: [depends_on]}
+  subnode: {fields: [node, role]}
+common_required: [id, title, type, description, tags, status, visibility, created, updated]
+enums:
+  status: [planned, implemented, done]
+  visibility: [private]
+  role: [plan, impl, test]
+defaults:
+  status: planned
+  visibility: private
+"""
+
+
 def memory_text(
     *,
     id: str,
@@ -84,6 +113,15 @@ def content_repo(tmp_path: Path) -> Path:
     """A minimal temp content repo: a hub.toml plus an (empty) memory/ tree."""
     (tmp_path / "hub.toml").write_text(HUB_TOML, encoding="utf-8")
     (tmp_path / "memory").mkdir()
+    return tmp_path
+
+
+@pytest.fixture
+def custom_profile_repo(tmp_path: Path) -> Path:
+    """A content repo driven by a custom profile YAML instead of the built-in ``personal`` one."""
+    (tmp_path / "hub.toml").write_text(CUSTOM_HUB_TOML, encoding="utf-8")
+    (tmp_path / "workflow.yaml").write_text(CUSTOM_PROFILE_YAML, encoding="utf-8")
+    (tmp_path / "graph").mkdir()
     return tmp_path
 
 

@@ -32,7 +32,10 @@ class Profile(BaseModel):
     name: str
     types: dict[str, TypeSpec]
     common_required: list[str] = Field(default_factory=list)
+    #: Closed vocabularies by field name (``status``, ``visibility``, or any type-specific field).
     enums: dict[str, list[str]] = Field(default_factory=dict)
+    #: Field values ``hub add``/``hub new`` fall back to when a write omits them (see writer.add).
+    defaults: dict[str, str] = Field(default_factory=dict)
 
     # --- convenience accessors -------------------------------------------------
 

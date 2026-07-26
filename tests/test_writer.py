@@ -76,6 +76,16 @@ def test_add_invalid_never_touches_disk(content_repo: Path) -> None:
     assert _tree(content_repo) == before
 
 
+def test_add_uses_profile_write_defaults(custom_profile_repo: Path) -> None:
+    config = load_config(custom_profile_repo)
+    doc = writer.add(config, {"type": "node", "title": "Stable live collections"}, "Do the thing.")
+
+    profile = load_profile(custom_profile_repo / "workflow.yaml")
+    loaded = loader.load_one(custom_profile_repo / "graph" / "node" / f"{doc.id}.md", profile)
+    assert loaded.frontmatter.status == "planned"  # profile default, not the engine's 'draft'
+    assert loaded.frontmatter.visibility == "private"
+
+
 def test_add_unresolved_related_warns_but_writes(seeded_repo: Path) -> None:
     config = load_config(seeded_repo)
     with pytest.warns(WriteWarning, match="skill-ghost"):

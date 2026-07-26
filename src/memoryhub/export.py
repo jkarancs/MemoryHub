@@ -240,7 +240,7 @@ def export_store(config: Config, dest: str | Path, *, dry_run: bool = False) -> 
             "problem(s); run `hub validate` and fix them first"
         )
 
-    profile = load_profile(config.hub.profile)
+    profile = load_profile(config.profile_ref)
     selected = _select(loader.load_all(config))
     exported_ids = {doc.id for doc in selected}
     content_dir = dest_root.relative_to(dest).as_posix()

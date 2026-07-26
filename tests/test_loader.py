@@ -60,6 +60,35 @@ def test_unknown_type_specific_field_is_an_error(seeded_repo: Path) -> None:
     assert any("proficiency" in issue.reason for issue in excinfo.value.issues)
 
 
+def test_custom_profile_store_validates_end_to_end(custom_profile_repo: Path) -> None:
+    graph = custom_profile_repo / "graph" / "node"
+    graph.mkdir(parents=True)
+    (graph / "node-01.md").write_text(
+        memory_text(
+            id="node-01",
+            type="node",
+            description="A unit of work.",
+            status="planned",
+            extras={"depends_on": "[]"},
+        ),
+        encoding="utf-8",
+    )
+    report = loader.validate_store(load_config(custom_profile_repo))
+    assert report.ok, [str(issue) for issue in report.issues]
+
+
+def test_custom_profile_store_rejects_a_foreign_status(custom_profile_repo: Path) -> None:
+    graph = custom_profile_repo / "graph" / "node"
+    graph.mkdir(parents=True)
+    (graph / "node-02.md").write_text(
+        memory_text(id="node-02", type="node", status="archived"),  # a personal-profile status
+        encoding="utf-8",
+    )
+    report = loader.validate_store(load_config(custom_profile_repo))
+    assert not report.ok
+    assert "status 'archived' is not in profile 'workflow'" in report.issues[0].reason
+
+
 def test_missing_frontmatter_block(tmp_path: Path) -> None:
     path = tmp_path / "plain.md"
     path.write_text("just some markdown\n", encoding="utf-8")

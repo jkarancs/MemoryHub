@@ -42,7 +42,7 @@ class Hub:
             self.config = config
         else:
             self.config = load_config(config)
-        self.profile: Profile = load_profile(self.config.hub.profile)
+        self.profile: Profile = load_profile(self.config.profile_ref)
         self._cache: list[MemoryDoc] | None = None
         self._cache_snapshot: _Snapshot | None = None
         self._vector_index: VectorIndex | None = None
