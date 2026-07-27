@@ -14,7 +14,8 @@ The queries:
   * :meth:`Graph.next` — the single next actionable node in a scope (the skill entry point).
   * :meth:`Graph.ready` — every ready node, in walk order.
   * :meth:`Graph.status` — counts by status per supernode (the ``PROGRESS.md`` replacement).
-  * :meth:`Graph.validate` — the graph invariants a per-file schema check can't see.
+  * :meth:`Graph.validate` — the graph invariants a per-file schema check can't see, split into
+    fatal issues and non-fatal warnings.
 """
 
 from __future__ import annotations
@@ -319,13 +320,16 @@ class Graph:
     def validate(self) -> StoreReport:
         """Check the graph invariants no per-file schema check can see (plan §6).
 
-        Dangling references · dependency cycles · edges into ``superseded`` nodes · unfinished
-        supersessions · node status vs the newest subnode's ``verdict`` · ``attempt`` vs the
-        number of ``impl`` subnodes · id/filename agreement · per-type status validity ·
-        per-type required fields · a work record for every started node · subnodes their node
-        actually lists.
+        **Issues** (they fail the report, hence the exit code): dangling references · dependency
+        cycles · edges into ``superseded`` nodes · unfinished supersessions · node status vs the
+        newest subnode's ``verdict`` · ``attempt`` vs the number of ``impl`` subnodes ·
+        id/filename agreement · per-type status validity · per-type required fields · a work
+        record for every started node · subnodes their node actually lists.
+
+        **Warnings** (reported, never fatal): nodes their supernode does not list.
         """
         issues: list[ValidationIssue] = []
+        warnings: list[ValidationIssue] = []
         for doc in self.docs:
             issues += self._check_filename(doc)
             issues += self._check_status(doc)
@@ -335,10 +339,11 @@ class Graph:
             issues += self._check_superseded_deps(node)
             issues += self._check_supersession(node)
             issues += self._check_history(node)
+            warnings += self._check_membership(node)
         for sub in self._of_type(SUBNODE):
             issues += self._check_attachment(sub)
         issues += self._check_cycles()
-        return StoreReport(issues=issues, warnings=[], checked=len(self.docs))
+        return StoreReport(issues=issues, warnings=warnings, checked=len(self.docs))
 
     def _check_filename(self, doc: MemoryDoc) -> list[ValidationIssue]:
         if doc.path is None or doc.path.stem == doc.id:
@@ -435,6 +440,28 @@ class Graph:
                 NODE,
                 f"node {node.id!r} does not list this subnode — an interrupted write; append it "
                 f"to that node's `subnodes` and set the node's status to {verdict!r}",
+            )
+        ]
+
+    def _check_membership(self, node: MemoryDoc) -> list[ValidationIssue]:
+        """A node should appear in its supernode's ``nodes`` — a **warning**, not an issue.
+
+        :meth:`_supernode_nodes` tolerates the omission by walking unlisted claimants last, which
+        is what keeps a bulk migration workable while it writes nodes faster than it can order
+        them. The cost is that ``nodes`` degrades from a build-order record into a hint, so the
+        drift is reported rather than ignored — but as a warning, because a legitimate mid-write
+        moment produces it and every skill's preflight gates on the exit code (plan §11.7).
+        """
+        supernode = self._typed(_ref(node, SUPERNODE) or "", SUPERNODE)
+        if supernode is None or node.id in _refs(supernode, "nodes"):
+            return []  # unresolvable/absent `supernode` is already reported by the other checks
+        return [
+            ValidationIssue(
+                node.path,
+                SUPERNODE,
+                f"supernode {supernode.id!r} does not list this node — insert it into that "
+                f"supernode's `nodes` at its build-order position (unlisted nodes are walked "
+                f"last, so ordering silently stops meaning anything)",
             )
         ]
 

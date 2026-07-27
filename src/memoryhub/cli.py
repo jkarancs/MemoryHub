@@ -565,6 +565,10 @@ def graph_validate_cmd(
     count, id/filename agreement, per-type status validity and required fields (the profile can
     only declare one store-wide status enum and no per-type requirements), a work record for
     every started node, and subnodes their node actually lists.
+
+    A node its supernode does not list is reported as a *warning* (printed to stderr, or under
+    `warnings` in `--json`) and does not affect the exit code — read them, do not infer silence
+    from exit 0.
     """
     graph = _open_graph()
     report = graph.validate()

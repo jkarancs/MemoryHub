@@ -34,6 +34,10 @@ def _problems(report: StoreReport) -> list[tuple[str, str]]:
     return [(issue.field, issue.reason) for issue in report.issues]
 
 
+def _warnings(report: StoreReport) -> list[tuple[str, str]]:
+    return [(warning.field, warning.reason) for warning in report.warnings]
+
+
 # --- traversal ---------------------------------------------------------------------
 
 
@@ -282,6 +286,7 @@ def test_status_of_a_supernode_scope_covers_only_itself(graph: Graph) -> None:
 def test_validate_is_clean_on_a_healthy_graph(graph: Graph) -> None:
     report = graph.validate()
     assert report.ok, _problems(report)
+    assert _warnings(report) == []
     assert report.checked == len(graph.docs)
 
 
@@ -455,6 +460,31 @@ def test_validate_flags_a_subnode_its_node_does_not_list(graph_repo: Path) -> No
     ]
 
 
+def test_validate_warns_about_a_node_its_supernode_does_not_list(graph_repo: Path) -> None:
+    # The bulk-migration signature: the node landed, the supernode's build order never got it.
+    write_node(graph_repo, "demo-hardening-04")
+    report = _graph_of(graph_repo).validate()
+    assert _warnings(report) == [
+        (
+            "supernode",
+            "supernode 'demo-hardening' does not list this node — insert it into that "
+            "supernode's `nodes` at its build-order position (unlisted nodes are walked last, "
+            "so ordering silently stops meaning anything)",
+        )
+    ]
+    # It is a warning, so the gate every skill preflights on stays green.
+    assert _problems(report) == []
+    assert report.ok
+
+
+def test_validate_stays_silent_when_the_supernode_reference_is_broken(graph_repo: Path) -> None:
+    # One fault, one message: the dangling reference owns this, not the membership warning.
+    write_node(graph_repo, "demo-hardening-04", extras={"supernode": "demo-nope"})
+    report = _graph_of(graph_repo).validate()
+    assert _problems(report) == [("supernode", "id 'demo-nope' does not resolve")]
+    assert _warnings(report) == []
+
+
 # --- CLI ---------------------------------------------------------------------------
 
 
@@ -564,6 +594,21 @@ def test_cli_validate_ok(in_graph_repo: Path) -> None:
     result = runner.invoke(app, ["graph", "validate"])
     assert result.exit_code == 0, result.output
     assert "graph invariants hold" in result.output
+
+
+def test_cli_validate_surfaces_a_warning_without_failing(in_graph_repo: Path) -> None:
+    write_node(in_graph_repo, "demo-hardening-04")
+    result = runner.invoke(app, ["graph", "validate"])
+    assert result.exit_code == 0, result.output
+    assert "warning: " in result.output
+    assert "does not list this node" in result.output
+    assert "graph invariants hold" in result.output
+
+    as_json = runner.invoke(app, ["graph", "validate", "--json"])
+    assert as_json.exit_code == 0
+    report = json.loads(as_json.output)
+    assert report["valid"] is True
+    assert [warning["field"] for warning in report["warnings"]] == ["supernode"]
 
 
 def test_cli_validate_reports_and_exits_1(in_graph_repo: Path) -> None:
