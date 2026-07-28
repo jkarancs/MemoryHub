@@ -80,7 +80,7 @@ no_implicit_optional = true
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["frontmatter", "yaml", "tomli", "lancedb", "sentence_transformers", "openai"]
+module = ["frontmatter", "yaml", "tomli", "lancedb", "pyarrow", "sentence_transformers", "openai"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
