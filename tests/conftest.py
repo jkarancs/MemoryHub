@@ -195,10 +195,11 @@ def write_subnode(repo: Path, node: str, role: str, verdict: str, suffix: str = 
 def graph_repo(workflow_repo: Path) -> Path:
     """A small but complete development graph: one project, two supernodes, four nodes.
 
-    ``demo-hardening`` is ``in-progress`` and ``demo-commercial`` merely ``planned``, so the
-    project walk order is the reverse of the id order — that's the "started work first" rule.
-    Its 01 is done, 02 is ready behind it, 03 is blocked behind 02; the commercial node is
-    ``rejected`` (so it needs its plan *and* its test) and overrides ``repository``.
+    ``demo-hardening``'s 01 is done, 02 is ready behind it, 03 is blocked behind 02; the
+    ``demo-site`` node is ``rejected`` (so it needs its plan *and* its test) and overrides
+    ``repository``. Both supernodes are therefore ``in-progress``, as plan §3.3 requires of a
+    track with work past ``planned`` — so within the project they walk in id order, and a test
+    that wants the "started work first" rule adds its own unstarted supernode.
     """
     write_graph_doc(
         workflow_repo, id="demo", type="project", status="active", extras={"repository": "Demo"}
@@ -215,10 +216,10 @@ def graph_repo(workflow_repo: Path) -> Path:
     )
     write_graph_doc(
         workflow_repo,
-        id="demo-commercial",
+        id="demo-site",
         type="supernode",
-        status="planned",
-        extras={"project": "demo", "nodes": "[demo-commercial-01]"},
+        status="in-progress",
+        extras={"project": "demo", "nodes": "[demo-site-01]"},
     )
 
     write_node(
@@ -246,19 +247,17 @@ def graph_repo(workflow_repo: Path) -> Path:
 
     write_node(
         workflow_repo,
-        "demo-commercial-01",
+        "demo-site-01",
         status="rejected",
         extras={
-            "subnodes": (
-                "[demo-commercial-01-plan, demo-commercial-01-impl, demo-commercial-01-test]"
-            ),
+            "subnodes": "[demo-site-01-plan, demo-site-01-impl, demo-site-01-test]",
             "attempt": 1,
             "repository": "DemoSite",
         },
     )
-    write_subnode(workflow_repo, "demo-commercial-01", "plan", "planned")
-    write_subnode(workflow_repo, "demo-commercial-01", "impl", "implemented")
-    write_subnode(workflow_repo, "demo-commercial-01", "test", "rejected")
+    write_subnode(workflow_repo, "demo-site-01", "plan", "planned")
+    write_subnode(workflow_repo, "demo-site-01", "impl", "implemented")
+    write_subnode(workflow_repo, "demo-site-01", "test", "rejected")
     return workflow_repo
 
 

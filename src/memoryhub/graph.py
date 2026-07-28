@@ -122,6 +122,21 @@ def _ref(doc: MemoryDoc, field: str) -> str | None:
     return ids[0] if ids else None
 
 
+def _expected_supernode_status(nodes: Iterable[MemoryDoc]) -> str:
+    """The supernode status plan §3.3 derives from its nodes, in the rule's stated order.
+
+    Node vocabulary in, supernode vocabulary out — they merely share the spelling of ``planned``.
+    First match wins, which is what gives a supernode whose nodes are not written yet ``planned``
+    (nothing has started) instead of a vacuous ``done``.
+    """
+    statuses = {node.frontmatter.status for node in nodes}
+    if statuses <= {_UNSTARTED}:
+        return "planned"
+    if statuses <= {DONE, SUPERSEDED}:
+        return DONE
+    return "in-progress"
+
+
 class Graph:
     """A read-only, indexed view of a workflow store.
 
@@ -326,7 +341,8 @@ class Graph:
         id/filename agreement · per-type status validity · per-type required fields · a work
         record for every started node · subnodes their node actually lists.
 
-        **Warnings** (reported, never fatal): nodes their supernode does not list.
+        **Warnings** (reported, never fatal): nodes their supernode does not list · a supernode
+        status that does not follow from its nodes.
         """
         issues: list[ValidationIssue] = []
         warnings: list[ValidationIssue] = []
@@ -335,6 +351,8 @@ class Graph:
             issues += self._check_status(doc)
             issues += self._check_required(doc)
             issues += self._check_references(doc)
+        for supernode in self._of_type(SUPERNODE):
+            warnings += self._check_supernode_status(supernode)
         for node in self._of_type(NODE):
             issues += self._check_superseded_deps(node)
             issues += self._check_supersession(node)
@@ -462,6 +480,34 @@ class Graph:
                 f"supernode {supernode.id!r} does not list this node — insert it into that "
                 f"supernode's `nodes` at its build-order position (unlisted nodes are walked "
                 f"last, so ordering silently stops meaning anything)",
+            )
+        ]
+
+    def _check_supernode_status(self, supernode: MemoryDoc) -> list[ValidationIssue]:
+        """A supernode's status should follow from its nodes — a **warning**, not an issue.
+
+        Node status is cross-checked against its newest subnode's verdict (:meth:`_check_history`);
+        supernode status had no such check, so ``hub graph status`` could report an ``in-progress``
+        track whose nodes were all ``done``. Plan §3.3 assigns the value to "whichever agent
+        completes/creates its nodes", which is precisely why this is a warning: between a node's
+        transition and the container update the stored value is legitimately one write stale. It
+        stays *stored* rather than derived for the same reason node status does — a stored value is
+        greppable and visible in Obsidian.
+        """
+        if any(self._typed(ref, NODE) is None for ref in _refs(supernode, "nodes")):
+            return []  # an entry that resolves to no node hides one, and is already reported
+        nodes = self._supernode_nodes(supernode)
+        status = supernode.frontmatter.status
+        expected = _expected_supernode_status(nodes)
+        if status == expected:
+            return []
+        return [
+            ValidationIssue(
+                supernode.path,
+                "status",
+                f"status {status!r} does not follow from its {len(nodes)} node(s) — expected "
+                f"{expected!r}; set it (mid-loop it is legitimately one write behind, which is "
+                f"why this is a warning)",
             )
         ]
 

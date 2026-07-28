@@ -41,9 +41,20 @@ def _warnings(report: StoreReport) -> list[tuple[str, str]]:
 # --- traversal ---------------------------------------------------------------------
 
 
-def test_project_scope_walks_started_supernodes_first(graph: Graph) -> None:
-    # id order would put commercial first; `in-progress` outranks `planned`.
-    assert [doc.id for doc in graph.supernodes("demo")] == ["demo-hardening", "demo-commercial"]
+def test_project_scope_walks_started_supernodes_first(graph_repo: Path) -> None:
+    # id order would put the backlog first; `in-progress` outranks `planned`.
+    write_graph_doc(
+        graph_repo,
+        id="demo-backlog",
+        type="supernode",
+        status="planned",
+        extras={"project": "demo", "nodes": "[]"},
+    )
+    assert [doc.id for doc in _graph_of(graph_repo).supernodes("demo")] == [
+        "demo-hardening",
+        "demo-site",
+        "demo-backlog",
+    ]
 
 
 def test_supernode_scope_is_just_itself(graph: Graph) -> None:
@@ -55,7 +66,7 @@ def test_nodes_follow_the_supernodes_nodes_list(graph: Graph) -> None:
         "demo-hardening-01",
         "demo-hardening-02",
         "demo-hardening-03",
-        "demo-commercial-01",
+        "demo-site-01",
     ]
 
 
@@ -75,12 +86,12 @@ def test_ready_stops_at_unmet_dependencies(graph: Graph) -> None:
     # 01 is done (not actionable), 02 is unblocked by it, 03 waits behind 02.
     assert [doc.id for doc in graph.ready("demo")] == [
         "demo-hardening-02",
-        "demo-commercial-01",
+        "demo-site-01",
     ]
 
 
 def test_ready_filters_by_status(graph: Graph) -> None:
-    assert [doc.id for doc in graph.ready("demo", ["rejected"])] == ["demo-commercial-01"]
+    assert [doc.id for doc in graph.ready("demo", ["rejected"])] == ["demo-site-01"]
 
 
 def test_ready_hides_a_blocked_human_gated_node_unless_asked(graph_repo: Path) -> None:
@@ -103,10 +114,10 @@ def test_ready_hides_a_blocked_human_gated_node_unless_asked(graph_repo: Path) -
 def test_ready_skips_done_supernodes(graph_repo: Path) -> None:
     write_graph_doc(
         graph_repo,
-        id="demo-commercial",
+        id="demo-site",
         type="supernode",
         status="done",
-        extras={"project": "demo", "nodes": "[demo-commercial-01]"},
+        extras={"project": "demo", "nodes": "[demo-site-01]"},
     )
     assert [doc.id for doc in _graph_of(graph_repo).ready("demo")] == ["demo-hardening-02"]
 
@@ -125,7 +136,7 @@ def test_a_superseded_dependency_is_not_done(graph_repo: Path) -> None:
         },
     )
     write_subnode(graph_repo, "demo-hardening-01", "plan", "superseded", suffix="plan2")
-    assert [doc.id for doc in _graph_of(graph_repo).ready("demo")] == ["demo-commercial-01"]
+    assert [doc.id for doc in _graph_of(graph_repo).ready("demo")] == ["demo-site-01"]
 
 
 def test_unknown_scope_raises(graph: Graph) -> None:
@@ -153,10 +164,10 @@ def test_next_is_the_first_ready_node(graph: Graph) -> None:
 
 
 def test_next_on_a_rejected_node_reads_the_plan_and_the_test(graph: Graph) -> None:
-    payload = graph.next("demo-commercial")
+    payload = graph.next("demo-site")
     assert payload is not None
     assert payload["repository"] == "DemoSite"  # the node overrides its project's repo
-    assert payload["reads"] == ["demo-commercial-01-plan", "demo-commercial-01-test"]
+    assert payload["reads"] == ["demo-site-01-plan", "demo-site-01-test"]
 
 
 def test_next_reads_the_newest_subnode_of_each_role(graph_repo: Path) -> None:
@@ -267,16 +278,16 @@ def test_status_counts_per_supernode_and_scope(graph: Graph) -> None:
     assert report["total"] == 4
     assert report["ready"] == 2
     assert report["counts"] == {"done": 1, "planned": 2, "rejected": 1}
-    hardening, commercial = report["supernodes"]
+    hardening, site = report["supernodes"]
     assert hardening["id"] == "demo-hardening"
     assert hardening["counts"] == {"done": 1, "planned": 2}
     assert hardening["ready"] == 1
-    assert commercial["counts"] == {"rejected": 1}
+    assert site["counts"] == {"rejected": 1}
 
 
 def test_status_of_a_supernode_scope_covers_only_itself(graph: Graph) -> None:
-    report = graph.status("demo-commercial")
-    assert [row["id"] for row in report["supernodes"]] == ["demo-commercial"]
+    report = graph.status("demo-site")
+    assert [row["id"] for row in report["supernodes"]] == ["demo-site"]
     assert report["total"] == 1
 
 
@@ -477,6 +488,100 @@ def test_validate_warns_about_a_node_its_supernode_does_not_list(graph_repo: Pat
     assert report.ok
 
 
+def test_validate_warns_when_a_supernode_lags_its_finished_nodes(graph_repo: Path) -> None:
+    # Plan §11.8's own example: every node is `done`, the supernode still says `in-progress`.
+    write_node(
+        graph_repo,
+        "demo-site-01",
+        status="done",
+        extras={
+            "subnodes": "[demo-site-01-plan, demo-site-01-impl, demo-site-01-test]",
+            "attempt": 1,
+            "repository": "DemoSite",
+        },
+    )
+    write_subnode(graph_repo, "demo-site-01", "test", "done")
+    report = _graph_of(graph_repo).validate()
+    assert _warnings(report) == [
+        (
+            "status",
+            "status 'in-progress' does not follow from its 1 node(s) — expected 'done'; set it "
+            "(mid-loop it is legitimately one write behind, which is why this is a warning)",
+        )
+    ]
+    # The lag is legitimate for exactly as long as the loop takes, so the gate stays green.
+    assert _problems(report) == []
+    assert report.ok
+
+
+def test_validate_warns_when_a_planned_supernode_has_started_work(graph_repo: Path) -> None:
+    write_graph_doc(
+        graph_repo,
+        id="demo-site",
+        type="supernode",
+        status="planned",
+        extras={"project": "demo", "nodes": "[demo-site-01]"},
+    )
+    assert _warnings(_graph_of(graph_repo).validate()) == [
+        (
+            "status",
+            "status 'planned' does not follow from its 1 node(s) — expected 'in-progress'; set "
+            "it (mid-loop it is legitimately one write behind, which is why this is a warning)",
+        )
+    ]
+
+
+def test_validate_warns_when_an_unstarted_supernode_claims_progress(graph_repo: Path) -> None:
+    write_graph_doc(
+        graph_repo,
+        id="demo-backlog",
+        type="supernode",
+        status="in-progress",
+        extras={"project": "demo", "nodes": "[demo-backlog-01]"},
+    )
+    write_node(graph_repo, "demo-backlog-01")
+    assert _warnings(_graph_of(graph_repo).validate()) == [
+        (
+            "status",
+            "status 'in-progress' does not follow from its 1 node(s) — expected 'planned'; set "
+            "it (mid-loop it is legitimately one write behind, which is why this is a warning)",
+        )
+    ]
+
+
+def test_validate_calls_a_supernode_with_no_nodes_planned_not_done(graph_repo: Path) -> None:
+    # "Every node is done" is vacuously true of none of them; §3.3's order is what decides.
+    write_graph_doc(
+        graph_repo,
+        id="demo-backlog",
+        type="supernode",
+        status="done",
+        extras={"project": "demo", "nodes": "[]"},
+    )
+    assert _warnings(_graph_of(graph_repo).validate()) == [
+        (
+            "status",
+            "status 'done' does not follow from its 0 node(s) — expected 'planned'; set it "
+            "(mid-loop it is legitimately one write behind, which is why this is a warning)",
+        )
+    ]
+
+
+def test_validate_stays_silent_when_a_listed_node_does_not_resolve(graph_repo: Path) -> None:
+    # One fault, one message: an unwritten node hides whatever status it would have contributed,
+    # so the expectation would be a guess. The dangling reference owns this.
+    write_graph_doc(
+        graph_repo,
+        id="demo-backlog",
+        type="supernode",
+        status="done",
+        extras={"project": "demo", "nodes": "[demo-backlog-01]"},
+    )
+    report = _graph_of(graph_repo).validate()
+    assert _problems(report) == [("nodes", "id 'demo-backlog-01' does not resolve")]
+    assert _warnings(report) == []
+
+
 def test_validate_stays_silent_when_the_supernode_reference_is_broken(graph_repo: Path) -> None:
     # One fault, one message: the dangling reference owns this, not the membership warning.
     write_node(graph_repo, "demo-hardening-04", extras={"supernode": "demo-nope"})
@@ -518,7 +623,7 @@ def test_cli_next_text(in_graph_repo: Path) -> None:
 def test_cli_next_honours_status_filter(in_graph_repo: Path) -> None:
     result = runner.invoke(app, ["graph", "next", "demo", "--status", "rejected,needs-fix"])
     assert result.exit_code == 0, result.output
-    assert "demo-commercial-01" in result.output
+    assert "demo-site-01" in result.output
 
 
 def test_cli_next_is_not_an_error_when_idle(in_graph_repo: Path) -> None:
@@ -541,7 +646,7 @@ def test_cli_ready(in_graph_repo: Path) -> None:
     as_json = runner.invoke(app, ["graph", "ready", "demo", "--json"])
     assert [row["id"] for row in json.loads(as_json.output)] == [
         "demo-hardening-02",
-        "demo-commercial-01",
+        "demo-site-01",
     ]
 
 
@@ -551,7 +656,7 @@ def test_cli_ready_include_blocked(in_graph_repo: Path) -> None:
     assert [row["id"] for row in json.loads(result.output)] == [
         "demo-hardening-02",
         "demo-hardening-03",  # blocked behind 02, and only listed because we asked
-        "demo-commercial-01",
+        "demo-site-01",
     ]
 
 
@@ -560,10 +665,10 @@ def test_cli_ready_full_briefs_every_node(in_graph_repo: Path) -> None:
     result = runner.invoke(app, ["graph", "ready", "demo", "--full"])
     assert result.exit_code == 0, result.output
     rows = json.loads(result.output)
-    assert [row["node"]["id"] for row in rows] == ["demo-hardening-02", "demo-commercial-01"]
+    assert [row["node"]["id"] for row in rows] == ["demo-hardening-02", "demo-site-01"]
     assert rows[0]["node"]["body"]
     assert rows[1]["repository"] == "DemoSite"
-    assert rows[1]["reads"] == ["demo-commercial-01-plan", "demo-commercial-01-test"]
+    assert rows[1]["reads"] == ["demo-site-01-plan", "demo-site-01-test"]
     # `next` is the first of these.
     first = runner.invoke(app, ["graph", "next", "demo", "--json"])
     assert json.loads(first.output) == rows[0]
