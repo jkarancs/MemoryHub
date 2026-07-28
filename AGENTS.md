@@ -6,7 +6,7 @@
 ## Commands
 | Intent | Command | Authority |
 |---|---|---|
-| Setup | `uv pip install --python .venv/Scripts/python.exe -e ".[dev,mcp,vectors]"` | CI-equivalent install — see `.github/workflows/ci.yml` |
+| Setup | `uv pip install --python .venv/bin/python -e ".[dev,mcp,vectors]"` | CI-equivalent install — see `.github/workflows/ci.yml` |
 | Test — all | `uv run --no-sync pytest` | pytest — see `pyproject.toml`; deselects `-m local` |
 | Test — single | `uv run --no-sync pytest tests/test_writer.py -k <expr>` | |
 | Test — golden eval | `uv run --no-sync pytest -m local` | needs GPU/model + `../personal-memory` corpus — never in CI |
