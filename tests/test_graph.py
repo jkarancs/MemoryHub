@@ -301,6 +301,76 @@ def test_validate_is_clean_on_a_healthy_graph(graph: Graph) -> None:
     assert report.checked == len(graph.docs)
 
 
+def test_orchestration_documents_validate_but_do_not_enter_the_graph(graph_repo: Path) -> None:
+    baseline = _graph_of(graph_repo)
+    baseline_next = baseline.next("demo")
+    baseline_ready = [doc.id for doc in baseline.ready("demo")]
+    baseline_status = baseline.status("demo")
+
+    # A run is a profile document, not a graph node. Its metadata is recorded on a subnode and
+    # tokens intentionally stays a flat, shell/YAML-safe string for later readers.
+    write_graph_doc(
+        graph_repo,
+        id="run-workspace-orchestration-20260731",
+        type="orchestration",
+        status="running",
+    )
+    write_graph_doc(
+        graph_repo,
+        id="run-workspace-orchestration-cancelled",
+        type="orchestration",
+        status="cancelled",
+    )
+    write_node(
+        graph_repo,
+        "demo-hardening-01",
+        status="done",
+        extras={
+            "subnodes": (
+                "[demo-hardening-01-plan, demo-hardening-01-impl, demo-hardening-01-test, "
+                "demo-hardening-01-run]"
+            ),
+            "attempt": 2,
+        },
+    )
+    write_graph_doc(
+        graph_repo,
+        id="demo-hardening-01-run",
+        type="subnode",
+        status="done",
+        extras={
+            "node": "demo-hardening-01",
+            "role": "impl",
+            "verdict": "done",
+            "orchestration": "workspace-orchestration",
+            "session": "session-01",
+            "model": "gpt-5",
+            "effort": "high",
+            "tokens": "total=128 input=64 cached=8 output=48 reasoning=8",
+        },
+    )
+
+    hub = Hub(graph_repo)
+    store_report = hub.validate()
+    assert store_report.ok, [str(issue) for issue in store_report.issues]
+    assert "orchestration" in hub.list_types()
+    assert {"running", "cancelled"} <= set(hub.profile.enums["status"])
+    run_metadata = hub.get("demo-hardening-01-run")
+    assert run_metadata.frontmatter.extra["tokens"] == (
+        "total=128 input=64 cached=8 output=48 reasoning=8"
+    )
+
+    graph = hub.graph()
+    graph_report = graph.validate()
+    assert graph_report.ok, _problems(graph_report)
+    assert baseline_next is not None
+    next_node = graph.next("demo")
+    assert next_node is not None
+    assert next_node["node"]["id"] == baseline_next["node"]["id"]
+    assert [doc.id for doc in graph.ready("demo")] == baseline_ready
+    assert graph.status("demo") == baseline_status
+
+
 def test_validate_flags_a_dangling_reference(graph_repo: Path) -> None:
     write_node(graph_repo, "demo-hardening-04", extras={"depends_on": "[demo-hardening-99]"})
     assert _problems(_graph_of(graph_repo).validate()) == [

@@ -74,11 +74,13 @@ types:
   supernode: {fields: [project, nodes, created_by]}
   node:
     fields: [supernode, depends_on, subnodes, attempt, supersedes, repository, created_by]
-  subnode: {fields: [node, role, verdict, created_by]}
+  subnode:
+    fields: [node, role, verdict, created_by, model, effort, orchestration, session, tokens]
+  orchestration: {fields: []}
 common_required: [id, title, type, description, tags, status, visibility, created, updated]
 enums:
   status: [active, paused, planned, in-progress, implemented, rejected, needs-fix,
-           needs-feedback, replan, done, superseded]
+           needs-feedback, replan, running, cancelled, done, superseded]
   visibility: [private]
   role: [plan, impl, test, fdbk, fix]
   verdict: [planned, implemented, rejected, needs-fix, needs-feedback, replan, done, superseded]

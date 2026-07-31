@@ -46,8 +46,11 @@ ACTIONABLE: tuple[str, ...] = (
     "replan",
 )
 
-#: Which statuses are legal for which type. A profile declares one store-wide ``status`` enum
-#: (the union of all four vocabularies), so "is this status legal for *this* type?" lands here.
+#: Which statuses are legal for which graph type. A profile declares one store-wide ``status``
+#: enum (the union of the graph vocabularies plus any content-specific statuses), so "is this
+#: status legal for *this* type?" lands here. Profile types outside this mapping, such as
+#: ``orchestration``, are content documents and deliberately stay out of graph validation and
+#: traversal.
 TYPE_STATUSES: dict[str, tuple[str, ...]] = {
     PROJECT: ("active", "paused", DONE),
     SUPERNODE: ("planned", "in-progress", DONE),
