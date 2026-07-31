@@ -13,6 +13,7 @@ a model.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -55,6 +56,41 @@ def _sql_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _patch_lancedb_wakeup() -> None:
+    """Keep LanceDB's background loop usable on runtimes that reject socket.send().
+
+    LanceDB 0.34 bridges its synchronous API to a background asyncio loop.  On some Linux
+    runtimes (including the WSL/sandbox environment used by the test suite), the loop's
+    socketpair rejects ``socket.send`` with ``EPERM``.  LanceDB catches that error and the
+    caller then waits forever for the coroutine that was never woken.  ``os.write`` targets the
+    same socketpair and remains permitted, so use it for the loop's private wakeup hook.
+
+    The hook is intentionally feature-detected: older/newer LanceDB versions without this
+    implementation detail are left untouched.
+    """
+    try:
+        from lancedb.background_loop import LOOP
+    except (ImportError, AttributeError):
+        return
+
+    loop = getattr(LOOP, "loop", None)
+    csock = getattr(loop, "_csock", None)
+    if loop is None or csock is None or not hasattr(loop, "_write_to_self"):
+        return
+
+    def wake() -> None:
+        current_socket = getattr(loop, "_csock", None)
+        if current_socket is None:
+            return
+        try:
+            os.write(current_socket.fileno(), b"\0")
+        except OSError:
+            # Match asyncio's best-effort wakeup semantics during loop shutdown.
+            pass
+
+    loop._write_to_self = wake
+
+
 class VectorIndex:
     """Thin wrapper over the LanceDB table backing ``Hub.search``/``Hub.reindex``."""
 
@@ -69,6 +105,7 @@ class VectorIndex:
             ) from exc
         self._pa = pyarrow
         self.config = config
+        _patch_lancedb_wakeup()
         self._db = lancedb.connect(str(config.index_path))
         self._embedder = embedder
 
