@@ -17,7 +17,7 @@
 | MCP server | `hub mcp` | run from inside a content repo — `hub.toml` resolves upward from cwd |
 
 ## Conventions
-- Work tracking: workspace roadmap specs — `../specs/ai-roadmap/` (MemoryHub phases: P2, P3) · Branch: `main`, direct commits · Commit: one-line summary, no body — on the user's behalf; amend-on-fix ok
+- Work tracking: the **development graph** in `/home/jkarancsi/git/agent-memory` — MemoryHub nodes live under `memoryhub-career` (Phase 6 acceptance), `personalsite-build` (store-side work), `workspace-graph-workflow` (the `hub graph` engine), and the `ai-roadmap-*` arcs. `hub graph status <scope>` is the live status; take work with `/implement`, start new work with `/create-plan`. The workspace specs (`../specs/ai-roadmap/`, `../specs/memoryhub/`) stay the acceptance contracts, but their status tables are a frozen archive — never read one to find work and never write a status into it · Branch: `main`, direct commits · Commit: one-line summary, no body — on the user's behalf; amend-on-fix ok
 - Done means: `uv run --no-sync pytest` passes; keep core coverage ≥90% (repo convention, not CI-enforced).
 
 ## Judgment Boundaries
