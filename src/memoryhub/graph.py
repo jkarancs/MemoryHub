@@ -37,12 +37,17 @@ DONE = "done"
 SUPERSEDED = "superseded"
 
 #: Node statuses that still carry work — the default scope of :meth:`Graph.ready`/:meth:`next`.
+#: ``feedback-ready`` is one of them: a prepped decision is work, it is simply a *person's*. The
+#: engine has no "statuses an agent may claim" set — a skill states the ones its role may act on
+#: (`--status planned,rejected,needs-fix`), so a human-gated status stays out of agent hands by
+#: nobody asking for it, not by a list here.
 ACTIONABLE: tuple[str, ...] = (
     "planned",
     "rejected",
     "needs-fix",
     "implemented",
     "needs-feedback",
+    "feedback-ready",
     "replan",
 )
 
@@ -64,18 +69,23 @@ TYPE_STATUSES: dict[str, tuple[str, ...]] = {
 #:
 #: The rule: the plan, plus the newest record of every role whose findings the reader must act
 #: on — and nothing else, so an independent check stays independent (a tester never reads a
-#: prior ``test``; a retrying developer reads the findings, not its own old notes). The two
+#: prior ``test``; a retrying developer reads the findings, not its own old notes). The
 #: human-gated statuses are the exception: any role can raise them (a ``test`` verdict, a
 #: blocked ``impl``/``fix`` — plan §11.12 — or a previous deferral's ``fdbk``), so the status
-#: does not say who did, and the human reads the node cold. They get the newest of each.
-_HUMAN_GATED_READS = ("plan", "impl", "fix", "test", "fdbk")
+#: does not say who did, and the human reads the node cold. They get the newest of each — and
+#: ``prep`` among them, because on a ``feedback-ready`` node the prepared decision *is* what the
+#: human came to read.
+_HUMAN_GATED_READS = ("plan", "impl", "fix", "test", "fdbk", "prep")
 
 STATUS_READS: dict[str, tuple[str, ...]] = {
     "planned": ("plan",),
     "rejected": ("plan", "test"),
-    "needs-fix": ("plan", "test", "fdbk"),
+    # `prep` is here for the same reason `fdbk` is: when prep sets `needs-fix` on its own
+    # (bounded autonomy), its record is the fix spec the developer must work from.
+    "needs-fix": ("plan", "test", "fdbk", "prep"),
     "implemented": ("plan", "impl", "fix"),
     "needs-feedback": _HUMAN_GATED_READS,
+    "feedback-ready": _HUMAN_GATED_READS,
     "replan": _HUMAN_GATED_READS,
 }
 
@@ -100,6 +110,11 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
 
 #: The one node status that legitimately has no work record yet — everything else is mid-loop.
 _UNSTARTED = "planned"
+
+#: The feedback loop's one role-conditional rule: a ``prep`` record prepares a decision a human
+#: has *already* been asked for, so the only status it may act on is the one that asked.
+_PREP = "prep"
+_PREP_ACTS_ON = "needs-feedback"
 
 #: Supernode walk order inside a project scope: started work before unstarted, finished last.
 #: (Build order across supernodes isn't otherwise encoded; between nodes it is — ``depends_on``.)
@@ -342,7 +357,8 @@ class Graph:
         cycles · edges into ``superseded`` nodes · unfinished supersessions · node status vs the
         newest subnode's ``verdict`` · ``attempt`` vs the number of ``impl`` subnodes ·
         id/filename agreement · per-type status validity · per-type required fields · a work
-        record for every started node · subnodes their node actually lists.
+        record for every started node · subnodes their node actually lists · ``prep`` records
+        that did not follow the ``needs-feedback`` they answer.
 
         **Warnings** (reported, never fatal): nodes their supernode does not list · a supernode
         status that does not follow from its nodes.
@@ -360,6 +376,7 @@ class Graph:
             issues += self._check_superseded_deps(node)
             issues += self._check_supersession(node)
             issues += self._check_history(node)
+            issues += self._check_prep_records(node)
             warnings += self._check_membership(node)
         for sub in self._of_type(SUBNODE):
             issues += self._check_attachment(sub)
@@ -553,6 +570,36 @@ class Graph:
                     f"attempt is {attempt!r} but the node has {impls} impl subnode(s)",
                 )
             )
+        return issues
+
+    def _check_prep_records(self, node: MemoryDoc) -> list[ValidationIssue]:
+        """A ``prep`` record may only act on a ``needs-feedback`` node.
+
+        The status a record acted on is recoverable from the history alone: a subnode's
+        ``verdict`` is the status it *set*, so the one before it is what it *found* — and the
+        first record finds ``planned``. A deferral (plan §4e) repeats the status rather than
+        changing it, so it threads through unchanged.
+
+        This is the only role-conditional transition the graph enforces, and deliberately so:
+        every other arrow is checked as status-equals-newest-verdict (:meth:`_check_history`) and
+        nothing more. ``prep`` earns the extra rule because its whole meaning is "a human was
+        already asked" — a prep record anywhere else is an agent opening the human gate for
+        itself, which is exactly the thing the two-step loop exists to prevent.
+        """
+        issues = []
+        found = _UNSTARTED
+        for sub in self.subnodes(node):
+            if sub.frontmatter.extra.get("role") == _PREP and found != _PREP_ACTS_ON:
+                issues.append(
+                    ValidationIssue(
+                        node.path,
+                        "subnodes",
+                        f"subnode {sub.id!r} is a {_PREP!r} record on a node that was "
+                        f"{found!r} — prep answers a decision a human was already asked for, "
+                        f"so it may only follow a {_PREP_ACTS_ON!r} record",
+                    )
+                )
+            found = str(sub.frontmatter.extra.get("verdict"))
         return issues
 
     def _check_cycles(self) -> list[ValidationIssue]:

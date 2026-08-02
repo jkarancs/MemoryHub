@@ -111,6 +111,28 @@ def test_ready_hides_a_blocked_human_gated_node_unless_asked(graph_repo: Path) -
     ]
 
 
+def test_ready_treats_feedback_ready_as_another_human_gate(graph_repo: Path) -> None:
+    # A prepped decision is still work, so it is actionable by default — but it is a *person's*
+    # work, so like `needs-feedback` it stays hidden while blocked unless the queue asks.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="feedback-ready",
+        extras={
+            "depends_on": "[demo-hardening-03]",
+            "subnodes": "[demo-hardening-04-plan, demo-hardening-04-prep]",
+        },
+    )
+    write_subnode(graph_repo, "demo-hardening-04", "plan", "needs-feedback")
+    write_subnode(graph_repo, "demo-hardening-04", "prep", "feedback-ready")
+    graph = _graph_of(graph_repo)
+    assert graph.ready("demo", ["feedback-ready"]) == []
+    assert [doc.id for doc in graph.ready("demo", ["feedback-ready"], include_blocked=True)] == [
+        "demo-hardening-04"
+    ]
+    assert "demo-hardening-04" in [doc.id for doc in graph.ready("demo", include_blocked=True)]
+
+
 def test_ready_skips_done_supernodes(graph_repo: Path) -> None:
     write_graph_doc(
         graph_repo,
@@ -258,6 +280,71 @@ def test_next_on_a_needs_fix_node_reads_the_findings_behind_the_decision(graph_r
     ]
 
 
+def test_next_on_a_feedback_ready_node_hands_the_human_the_prepared_decision(
+    graph_repo: Path,
+) -> None:
+    # The whole point of the two-step loop: the `-prep` record carries the choices, the
+    # recommendation and the playbook, so it is the record the human came to read.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="feedback-ready",
+        extras={
+            "subnodes": (
+                "[demo-hardening-04-plan, demo-hardening-04-impl, demo-hardening-04-test, "
+                "demo-hardening-04-prep]"
+            ),
+            "attempt": 1,
+        },
+    )
+    for role, verdict in (
+        ("plan", "planned"),
+        ("impl", "implemented"),
+        ("test", "needs-feedback"),
+        ("prep", "feedback-ready"),
+    ):
+        write_subnode(graph_repo, "demo-hardening-04", role, verdict)
+    payload = _graph_of(graph_repo).next("demo-hardening", ["feedback-ready"])
+    assert payload is not None
+    assert payload["reads"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-impl",
+        "demo-hardening-04-test",
+        "demo-hardening-04-prep",
+    ]
+
+
+def test_next_on_a_node_prep_sent_to_needs_fix_reads_the_prep_spec(graph_repo: Path) -> None:
+    # Bounded prep autonomy: no human ruled here, so there is no `-fdbk` — the fix spec the
+    # developer must work from is in the `-prep`.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="needs-fix",
+        extras={
+            "subnodes": (
+                "[demo-hardening-04-plan, demo-hardening-04-impl, demo-hardening-04-test, "
+                "demo-hardening-04-prep]"
+            ),
+            "attempt": 1,
+        },
+    )
+    for role, verdict in (
+        ("plan", "planned"),
+        ("impl", "implemented"),
+        ("test", "needs-feedback"),
+        ("prep", "needs-fix"),
+    ):
+        write_subnode(graph_repo, "demo-hardening-04", role, verdict)
+    payload = _graph_of(graph_repo).next("demo-hardening", ["needs-fix"])
+    assert payload is not None
+    assert payload["reads"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-test",
+        "demo-hardening-04-prep",
+    ]
+
+
 def test_next_returns_none_when_nothing_is_ready(graph: Graph) -> None:
     assert graph.next("demo", ["needs-feedback"]) is None
 
@@ -369,6 +456,124 @@ def test_orchestration_documents_validate_but_do_not_enter_the_graph(graph_repo:
     assert next_node["node"]["id"] == baseline_next["node"]["id"]
     assert [doc.id for doc in graph.ready("demo")] == baseline_ready
     assert graph.status("demo") == baseline_status
+
+
+#: Every arrow out of `feedback-ready`, keyed by the node that exercises it. The human rules
+#: through the *existing* machinery — approve, accept the proposed fix, replan/drop/custom text,
+#: "I did the playbook" (a tester validates it), cancel — plus §4e's deferral, which is the one
+#: record that repeats the status instead of changing it.
+_FEEDBACK_EXITS = {
+    "04": "done",
+    "05": "needs-fix",
+    "06": "replan",
+    "07": "implemented",
+    "08": "superseded",
+    "09": "feedback-ready",
+}
+
+
+def test_validate_accepts_every_arrow_of_the_feedback_loop(graph_repo: Path) -> None:
+    for seq, exit_status in _FEEDBACK_EXITS.items():
+        node = f"demo-hardening-{seq}"
+        write_node(
+            graph_repo,
+            node,
+            status=exit_status,
+            extras={
+                "subnodes": (f"[{node}-plan, {node}-impl, {node}-test, {node}-prep, {node}-fdbk]"),
+                "attempt": 1,
+            },
+        )
+        for role, verdict in (
+            ("plan", "planned"),
+            ("impl", "implemented"),
+            ("test", "needs-feedback"),
+            ("prep", "feedback-ready"),
+            ("fdbk", exit_status),
+        ):
+            write_subnode(graph_repo, node, role, verdict)
+    # Bounded prep autonomy: an unambiguous defect it found itself, with the fix spec written.
+    write_node(
+        graph_repo,
+        "demo-hardening-10",
+        status="needs-fix",
+        extras={
+            "subnodes": (
+                "[demo-hardening-10-plan, demo-hardening-10-impl, demo-hardening-10-test, "
+                "demo-hardening-10-prep]"
+            ),
+            "attempt": 1,
+        },
+    )
+    for role, verdict in (
+        ("plan", "planned"),
+        ("impl", "implemented"),
+        ("test", "needs-feedback"),
+        ("prep", "needs-fix"),
+    ):
+        write_subnode(graph_repo, "demo-hardening-10", role, verdict)
+    write_graph_doc(
+        graph_repo,
+        id="demo-hardening",
+        type="supernode",
+        status="in-progress",
+        extras={
+            "project": "demo",
+            "nodes": "[" + ", ".join(f"demo-hardening-{n:02d}" for n in range(1, 11)) + "]",
+        },
+    )
+    report = _graph_of(graph_repo).validate()
+    assert _problems(report) == []
+    assert _warnings(report) == []
+
+
+def test_a_store_on_the_pre_feedback_loop_profile_still_validates(graph_repo: Path) -> None:
+    # No breaking change: the new vocabulary is values the engine reads, never an enum it needs.
+    profile = (graph_repo / "workflow.yaml").read_text(encoding="utf-8")
+    (graph_repo / "workflow.yaml").write_text(
+        profile.replace(", feedback-ready", "").replace(", prep", ""), encoding="utf-8"
+    )
+    hub = Hub(graph_repo)
+    assert "feedback-ready" not in hub.profile.enums["status"]
+    assert hub.validate().ok
+    assert hub.graph().validate().ok
+
+
+def test_validate_flags_a_feedback_ready_node_no_record_prepped(graph_repo: Path) -> None:
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="feedback-ready",
+        extras={"subnodes": "[demo-hardening-04-plan]"},
+    )
+    write_subnode(graph_repo, "demo-hardening-04", "plan", "planned")
+    assert _problems(_graph_of(graph_repo).validate()) == [
+        (
+            "status",
+            "status 'feedback-ready' does not match the verdict 'planned' of its newest subnode "
+            "'demo-hardening-04-plan'",
+        )
+    ]
+
+
+def test_validate_flags_a_prep_record_that_opened_the_human_gate_itself(graph_repo: Path) -> None:
+    # Prep answers a question a human was asked; it may not invent one and prep its own answer.
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="feedback-ready",
+        extras={"subnodes": "[demo-hardening-04-plan, demo-hardening-04-prep]"},
+    )
+    write_subnode(graph_repo, "demo-hardening-04", "plan", "planned")
+    write_subnode(graph_repo, "demo-hardening-04", "prep", "feedback-ready")
+    assert _problems(_graph_of(graph_repo).validate()) == [
+        (
+            "subnodes",
+            "subnode 'demo-hardening-04-prep' is a 'prep' record on a node that was 'planned' — "
+            "prep answers a decision a human was already asked for, so it may only follow a "
+            "'needs-feedback' record",
+        )
+    ]
 
 
 def test_validate_flags_a_dangling_reference(graph_repo: Path) -> None:
@@ -742,6 +947,29 @@ def test_cli_ready_full_briefs_every_node(in_graph_repo: Path) -> None:
     # `next` is the first of these.
     first = runner.invoke(app, ["graph", "next", "demo", "--json"])
     assert json.loads(first.output) == rows[0]
+
+
+def test_cli_ready_briefs_the_feedback_ready_queue(in_graph_repo: Path) -> None:
+    # Exactly the call the Bridge/`/feedback` makes: every prepped decision, blocked or not.
+    write_node(
+        in_graph_repo,
+        "demo-hardening-04",
+        status="feedback-ready",
+        extras={
+            "depends_on": "[demo-hardening-03]",
+            "subnodes": "[demo-hardening-04-plan, demo-hardening-04-prep]",
+        },
+    )
+    write_subnode(in_graph_repo, "demo-hardening-04", "plan", "needs-feedback")
+    write_subnode(in_graph_repo, "demo-hardening-04", "prep", "feedback-ready")
+    result = runner.invoke(
+        app,
+        ["graph", "ready", "demo", "--status", "feedback-ready", "--include-blocked", "--full"],
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)
+    assert [row["node"]["id"] for row in rows] == ["demo-hardening-04"]
+    assert rows[0]["reads"] == ["demo-hardening-04-plan", "demo-hardening-04-prep"]
 
 
 def test_cli_ready_on_a_node_scope_exits_1(in_graph_repo: Path) -> None:
