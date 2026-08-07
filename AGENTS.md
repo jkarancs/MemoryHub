@@ -24,11 +24,10 @@
 **NEVER**
 - Commit memory content or personal data to this repo — content belongs in the content repos.
 - Commit secrets, tokens, or credentials; never copy values from env files or keyrings into any file.
-- Add an external dependency without asking.
 
-**ASK**
-- Before changing the public API surface (`src/memoryhub/__init__.py`) or a schema profile's type vocabulary.
-- Before deleting files or any refactor beyond the task's stated scope.
+**PROCEED**
+- Add an external dependency when the node's plan needs one — record the addition and the reason in the node's `-impl` handoff.
+- Changing the public API surface (`src/memoryhub/__init__.py`) or a schema profile's type vocabulary: proceed only if the node's plan authorizes it — the content repos and `hub graph` consume both. Otherwise mark the node `needs-feedback` with the proposed shape and the consumers it breaks.
 
 **ALWAYS**
 - Read `.ai/CONTEXT.md` (Knowledge Layer, below) before exploring source or editing files.
