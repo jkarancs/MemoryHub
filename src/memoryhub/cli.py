@@ -716,6 +716,33 @@ def rm_cmd(id: str = typer.Argument(..., help="Memory id.")) -> None:
     typer.secho(f"Moved {id} to .trash/", fg=typer.colors.GREEN)
 
 
+@app.command("relayout")
+def relayout_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Perform the moves (without it, only report them)."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+) -> None:
+    """Move files to the canonical paths the profile's `layout` rules imply (dry-run by default).
+
+    Reads are location-agnostic, so a store may mix flat and nested files at any time and this
+    command is safe to re-run: a file already at its canonical path is never touched. It refuses
+    as a whole — before moving anything — if two documents claim one path or a target is taken.
+    """
+    hub = _open_hub()
+    with _guarded_write():
+        try:
+            report = hub.relayout(apply=apply)
+        except LoadError as exc:
+            _fail(str(exc))
+    if json_out:
+        _echo_json(report.to_dict())
+        return
+    for move in report.moves:
+        typer.echo(f"{'move ' if apply else 'would move '}{move}")
+    typer.secho(str(report), fg=typer.colors.GREEN)
+
+
 # --- MCP -------------------------------------------------------------------------
 
 

@@ -7,6 +7,8 @@ import unicodedata
 from collections.abc import Iterable
 
 _NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+#: A trailing id segment that marks a sequence rather than a name: ``-03``, ``-r1``.
+_SEQUENCE_SUFFIX_RE = re.compile(r"-(?:\d+|r\d+)$")
 
 
 def _slug_part(text: str) -> str:
@@ -30,6 +32,20 @@ def slugify(title: str, type: str) -> str:
     if not title_part:
         raise ValueError(f"title {title!r} contains no slug-safe characters")
     return f"{type_part}-{title_part}"
+
+
+def parent_id(id: str) -> str:
+    """Strip an id's trailing sequence segments: ``foo-03`` and ``foo-03-r1`` both give ``foo``.
+
+    Purely lexical — it never consults the store — so a caller composing a path at write time
+    needs no lookup. The last remaining segment is always kept (``03`` stays ``03``).
+    """
+    result = id
+    while True:
+        stripped = _SEQUENCE_SUFFIX_RE.sub("", result)
+        if stripped == result or not stripped:
+            return result
+        result = stripped
 
 
 def ensure_unique(id: str, existing: Iterable[str]) -> str:

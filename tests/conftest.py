@@ -94,6 +94,16 @@ defaults:
 """
 
 
+#: The ``layout`` block the development graph uses: nodes and subnodes group under their
+#: supernode, orchestration documents under the month in their id, supernodes/projects stay flat.
+WORKFLOW_LAYOUT_YAML = """\
+layout:
+  node: {field: supernode}
+  subnode: {field: node, transform: parent-id}
+  orchestration: {field: id, transform: year-month}
+"""
+
+
 def memory_text(
     *,
     id: str,
@@ -265,6 +275,27 @@ def graph_repo(workflow_repo: Path) -> Path:
     write_subnode(workflow_repo, "demo-site-01", "impl", "implemented")
     write_subnode(workflow_repo, "demo-site-01", "test", "rejected")
     return workflow_repo
+
+
+@pytest.fixture
+def layout_repo(workflow_repo: Path) -> Path:
+    """An empty ``workflow``-profile repo whose profile also declares ``layout`` rules."""
+    (workflow_repo / "workflow.yaml").write_text(
+        WORKFLOW_PROFILE_YAML + WORKFLOW_LAYOUT_YAML, encoding="utf-8"
+    )
+    return workflow_repo
+
+
+@pytest.fixture
+def flat_graph_layout_repo(graph_repo: Path) -> Path:
+    """The seeded graph store, still written flat, with ``layout`` rules newly declared.
+
+    The migration case ``hub relayout`` exists for: every file is where the old writer put it.
+    """
+    (graph_repo / "workflow.yaml").write_text(
+        WORKFLOW_PROFILE_YAML + WORKFLOW_LAYOUT_YAML, encoding="utf-8"
+    )
+    return graph_repo
 
 
 @pytest.fixture

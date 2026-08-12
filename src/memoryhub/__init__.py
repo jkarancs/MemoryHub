@@ -19,8 +19,8 @@ from .models import (
     frontmatter_json_schema,
     validate_against_profile,
 )
-from .profiles import Profile, list_builtin_profiles, load_profile
-from .writer import WriteError, WriteWarning
+from .profiles import LayoutRule, Profile, list_builtin_profiles, load_profile
+from .writer import Move, RelayoutReport, WriteError, WriteWarning
 
 __version__ = "0.1.0"
 
@@ -44,8 +44,11 @@ __all__ = [
     "IndexWarning",
     "ReindexStats",
     "Profile",
+    "LayoutRule",
     "load_profile",
     "list_builtin_profiles",
+    "Move",
+    "RelayoutReport",
     "Frontmatter",
     "MemoryDoc",
     "frontmatter_json_schema",

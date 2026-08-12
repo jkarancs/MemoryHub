@@ -127,6 +127,18 @@ class Hub:
         finally:
             self._invalidate()
 
+    def relayout(self, *, apply: bool = False) -> writer.RelayoutReport:
+        """Report (``apply=False``) or perform the moves that put files at their canonical paths.
+
+        The canonical path is what the profile's ``layout`` rules imply for each document; a
+        profile without them has nothing to move. See :func:`memoryhub.writer.relayout`.
+        """
+        try:
+            return writer.relayout(self.config, apply=apply)
+        finally:
+            if apply:
+                self._invalidate()
+
     # --- export ------------------------------------------------------------------
 
     def export(self, dest: str | Path, *, dry_run: bool = False) -> export_module.ExportReport:

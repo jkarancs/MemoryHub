@@ -15,7 +15,8 @@ import contextlib
 import os
 import tempfile
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,7 @@ import frontmatter as frontmatter_lib
 from pydantic import ValidationError
 
 from . import ids as ids_module
-from .loader import iter_store_paths, load_one, serialize, split_fields
+from .loader import flat_frontmatter, iter_store_paths, load_all, load_one, serialize, split_fields
 from .models import Frontmatter, MemoryDoc, validate_against_profile
 from .profiles import Profile, load_profile
 
@@ -55,6 +56,19 @@ def _check_policy(config: Config, action: str) -> None:
             )
         if not confirm_callback(f"Confirm {action}?"):
             raise WriteError(f"{action} aborted: not confirmed")
+
+
+def canonical_relpath(profile: Profile, fields: Mapping[str, Any]) -> Path:
+    """Where a document belongs relative to ``content_root``: ``<type>/[<subfolder>/]<id>.md``.
+
+    The subfolder comes from the profile's ``layout`` rule for the type (:class:`.LayoutRule`);
+    a profile that declares none puts every document straight in its type folder, exactly as
+    before layout existed.
+    """
+    type_ = str(fields["type"])
+    subfolder = profile.subfolder_for(type_, fields)
+    parent = Path(type_) / subfolder if subfolder else Path(type_)
+    return parent / f"{fields['id']}.md"
 
 
 def _confine(config: Config, path: Path) -> Path:
@@ -166,7 +180,7 @@ def add(config: Config, frontmatter_fields: dict[str, Any], body: str) -> Memory
     fm = _validate_or_raise(known, extra, profile)
     _warn_unresolved_related(fm, set(existing) | {new_id})
 
-    path = _confine(config, config.content_root / type_ / f"{new_id}.md")
+    path = _confine(config, config.content_root / canonical_relpath(profile, supplied))
     if path.exists():
         raise WriteError(f"refusing to overwrite existing file {path}")
     doc = MemoryDoc(frontmatter=fm, body=body, path=path)
@@ -240,3 +254,93 @@ def delete(config: Config, id: str) -> None:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         dest = trash / f"{path.stem}-{stamp}{path.suffix}"
     os.replace(path, _confine(config, dest))
+
+
+@dataclass(frozen=True)
+class Move:
+    """One file that is not at its canonical path (paths are relative to ``content_root``)."""
+
+    id: str
+    src: Path
+    dest: Path
+
+    def __str__(self) -> str:
+        return f"{self.src.as_posix()} -> {self.dest.as_posix()}"
+
+
+@dataclass
+class RelayoutReport:
+    """What :func:`relayout` found, and whether it was applied."""
+
+    moves: list[Move] = field(default_factory=list)
+    unchanged: int = 0
+    applied: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "applied": self.applied,
+            "unchanged": self.unchanged,
+            "moves": [
+                {"id": m.id, "src": m.src.as_posix(), "dest": m.dest.as_posix()} for m in self.moves
+            ],
+        }
+
+    def __str__(self) -> str:
+        verb = "Moved" if self.applied else "Would move"
+        return f"{verb} {len(self.moves)} file(s); {self.unchanged} already canonical."
+
+
+def _prune_empty_dirs(root: Path) -> None:
+    """Remove directories the moves emptied (deepest first); dot-directories are left alone."""
+    for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        rel = path.relative_to(root)
+        if any(part.startswith(".") for part in rel.parts) or not path.is_dir():
+            continue
+        with contextlib.suppress(OSError):
+            path.rmdir()
+
+
+def relayout(config: Config, *, apply: bool = False) -> RelayoutReport:
+    """Move existing files to the canonical paths the profile's ``layout`` rules imply.
+
+    Dry-run by default: nothing is touched unless ``apply`` is true. Idempotent by construction
+    — a file already at its canonical path is never moved, so a second run reports no moves.
+    Planning is complete before the first rename, so a refusal leaves the store untouched.
+
+    Raises:
+        WriteError: a target path is already occupied by another file.
+        LoadError: the store does not parse/validate — including the id collision that is the
+            only way two documents can claim one canonical path (the filename *is* the id, so
+            duplicate ids are what a collision looks like, and the loader reports them).
+    """
+    if apply:
+        _check_policy(config, "relayout")
+    profile = load_profile(config.profile_ref)
+    root = config.content_root
+
+    report = RelayoutReport(applied=False)
+    for doc in sorted(load_all(config), key=lambda d: d.id):
+        assert doc.path is not None
+        src = doc.path.resolve()
+        fields = flat_frontmatter(doc.frontmatter, profile)
+        dest = _confine(config, root / canonical_relpath(profile, fields))
+        if dest == src:
+            report.unchanged += 1
+        else:
+            report.moves.append(Move(doc.id, src.relative_to(root), dest.relative_to(root)))
+
+    for move in report.moves:
+        if (root / move.dest).exists():
+            raise WriteError(
+                f"refusing to relayout: {move.dest.as_posix()} already exists and is not the "
+                f"file {move.id!r} lives in"
+            )
+
+    if apply and report.moves:
+        for move in report.moves:
+            target = root / move.dest
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(root / move.src, target)
+        _prune_empty_dirs(root)
+    report.applied = apply
+    return report
