@@ -646,7 +646,8 @@ def new_cmd(
     hub = _open_hub()
     fields = _parse_sets(set_)
     fields.update(type=type, title=title, description=description)
-    fields["tags"] = _split_csv(tags) or []
+    if tags is not None:
+        fields["tags"] = _split_csv(tags) or []
     if id is not None:
         fields["id"] = id
     with _guarded_write():

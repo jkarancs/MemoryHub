@@ -379,6 +379,58 @@ def test_cli_new_stays_flat_without_layout(
     assert (workflow_repo / "graph/node/node-demo-node.md").is_file()
 
 
+def test_cli_new_preserves_set_tags_unless_explicit_tags_are_given(
+    layout_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`new` gives explicit ``--tags`` precedence without dropping ``--set tags``."""
+    monkeypatch.chdir(layout_repo)
+    from_set = runner.invoke(
+        app,
+        [
+            "new",
+            "node",
+            "--id",
+            "demo-set-tags",
+            "--title",
+            "Set tags",
+            "--description",
+            "d",
+            "--set",
+            "supernode=demo-site",
+            "--set",
+            "tags=[kept]",
+        ],
+    )
+    assert from_set.exit_code == 0, from_set.output
+    set_payload = json.loads(runner.invoke(app, ["get", "demo-set-tags", "--json"]).output)
+    assert set_payload["tags"] == ["kept"]
+
+    explicit = runner.invoke(
+        app,
+        [
+            "new",
+            "node",
+            "--id",
+            "demo-explicit-tags",
+            "--title",
+            "Explicit tags",
+            "--description",
+            "d",
+            "--set",
+            "supernode=demo-site",
+            "--set",
+            "tags=[kept]",
+            "--tags",
+            "explicit",
+        ],
+    )
+    assert explicit.exit_code == 0, explicit.output
+    explicit_payload = json.loads(
+        runner.invoke(app, ["get", "demo-explicit-tags", "--json"]).output
+    )
+    assert explicit_payload["tags"] == ["explicit"]
+
+
 def test_cli_new_rejects_an_unknown_field(
     layout_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
