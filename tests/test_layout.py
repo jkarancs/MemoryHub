@@ -326,6 +326,71 @@ def test_cli_relayout_dry_run_then_apply(
     assert validate.exit_code == 0, validate.output
 
 
+def test_cli_new_scaffolds_to_the_nested_canonical_path(
+    layout_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`hub new` must reach every layout rule: a field-derived one, and the id-derived one."""
+    monkeypatch.chdir(layout_repo)
+    cases = [
+        (
+            ["new", "node", "--title", "Demo node", "--set", "supernode=demo-site"],
+            "graph/node/demo-site",
+        ),
+        (
+            [
+                "new",
+                "subnode",
+                "--title",
+                "Demo notes",
+                "--set",
+                "node=demo-site-01",
+                "--set",
+                "role=impl",
+                "--set",
+                "verdict=implemented",
+                "--set",
+                "status=done",
+            ],
+            "graph/subnode/demo-site",
+        ),
+        (
+            ["new", "orchestration", "--title", "Window", "--id", "orch-20260812-2"],
+            "graph/orchestration/2026-08",
+        ),
+    ]
+    for argv, expected_dir in cases:
+        result = runner.invoke(app, [*argv, "--description", "Scaffolded."])
+        assert result.exit_code == 0, result.output
+        written = Path(result.output.split(" at ")[1].split(" (status")[0])
+        assert written.parent == (layout_repo / expected_dir).resolve()
+        assert written.is_file()
+
+
+def test_cli_new_stays_flat_without_layout(
+    workflow_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same invocation against a layout-less profile is unchanged: straight in `node/`."""
+    monkeypatch.chdir(workflow_repo)
+    result = runner.invoke(
+        app,
+        ["new", "node", "--title", "Demo node", "--description", "d", "--set", "supernode=demo"],
+    )
+    assert result.exit_code == 0, result.output
+    assert (workflow_repo / "graph/node/node-demo-node.md").is_file()
+
+
+def test_cli_new_rejects_an_unknown_field(
+    layout_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--set` widens what `new` can supply, not what the profile accepts."""
+    monkeypatch.chdir(layout_repo)
+    result = runner.invoke(
+        app,
+        ["new", "node", "--title", "Demo", "--description", "d", "--set", "nonsense=1"],
+    )
+    assert result.exit_code != 0
+
+
 def test_cli_add_reports_the_nested_path(
     layout_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

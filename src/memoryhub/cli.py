@@ -630,22 +630,32 @@ def new_cmd(
     title: str = typer.Option(..., "--title", prompt="Title"),
     description: str = typer.Option("", "--description", prompt="Description"),
     tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
+    id: str | None = typer.Option(
+        None, "--id", help="Choose the id instead of deriving it from the title."
+    ),
+    set_: list[str] | None = typer.Option(
+        None, "--set", help="Extra field as key=value (repeatable; YAML-typed values)."
+    ),
 ) -> None:
-    """Scaffold a new (draft) memory into the right folder; edit the file to fill in the body."""
+    """Scaffold a new (draft) memory into the right folder; edit the file to fill in the body.
+
+    `--set` supplies the type-specific fields a profile's `layout` rule may derive the folder
+    from (a node's `supernode`, a subnode's `node`), and `--id` the date-bearing id a
+    `year-month` rule reads — without them a scaffold can only ever land flat.
+    """
     hub = _open_hub()
+    fields = _parse_sets(set_)
+    fields.update(type=type, title=title, description=description)
+    fields["tags"] = _split_csv(tags) or []
+    if id is not None:
+        fields["id"] = id
     with _guarded_write():
-        doc = hub.add(
-            type=type,
-            title=title,
-            description=description,
-            tags=_split_csv(tags) or [],
-            body=f"TODO: describe this {type}.",
-        )
+        doc = hub.add(**fields, body=f"TODO: describe this {type}.")
     typer.secho(
         f"Created {doc.id} at {doc.path} (status: {doc.frontmatter.status})",
         fg=typer.colors.GREEN,
     )
-    extras = hub.profile.fields_for(type)
+    extras = [name for name in hub.profile.fields_for(type) if name not in fields]
     if extras:
         typer.echo(f"Type-specific fields you can add: {', '.join(extras)}")
 
