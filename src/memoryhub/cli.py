@@ -465,18 +465,37 @@ def graph_next_cmd(
     status: str | None = typer.Option(
         None, "--status", help="Comma-separated node statuses (default: every actionable one)."
     ),
+    node_id: str | None = typer.Option(
+        None,
+        "--node",
+        help="Claim-check this node id instead of walking: the same payload iff it is in SCOPE, "
+        "its status is in --status, and its dependencies are done. Otherwise "
+        '`{"node": null, "reason": ...}`, where reason is `out-of-scope`, '
+        "`status <s> not in <set>`, or `blocked by <ids>`.",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Emit the payload as JSON."),
 ) -> None:
     """The single next actionable node in SCOPE, with the subnodes the acting skill needs.
 
     A ready node is one whose status matches and whose every `depends_on` id is `done`. An idle
-    scope is not an error: it prints `null` (`--json`) and exits 0.
+    scope is not an error: it prints `null` (`--json`) and exits 0 — and neither is a `--node`
+    that isn't claimable, which prints its `reason` and also exits 0.
     """
     graph = _open_graph()
     try:
-        payload = graph.next(scope, _statuses(status))
+        payload = (
+            graph.next(scope, _statuses(status))
+            if node_id is None
+            else graph.claim(scope, node_id, _statuses(status))
+        )
     except GraphError as exc:
         _fail(str(exc))
+    if payload is not None and payload.get("node") is None:  # a --node that isn't claimable
+        if json_out:
+            _echo_json(payload)
+        else:
+            typer.secho(f"{node_id}: not claimable ({payload['reason']})", dim=True)
+        return
     if json_out:
         _echo_json(payload)
         return

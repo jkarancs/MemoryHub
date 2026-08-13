@@ -12,6 +12,7 @@ cross-links and is already warned on by ``hub validate``.
 
 The queries:
   * :meth:`Graph.next` — the single next actionable node in a scope (the skill entry point).
+  * :meth:`Graph.claim` — is *this* node claimable in the scope? (the orchestrator entry point).
   * :meth:`Graph.ready` — every ready node, in walk order.
   * :meth:`Graph.status` — counts by status per supernode (the ``PROGRESS.md`` replacement).
   * :meth:`Graph.validate` — the graph invariants a per-file schema check can't see, split into
@@ -234,17 +235,23 @@ class Graph:
             if sub is not None
         ]
 
-    def deps_met(self, node: MemoryDoc) -> bool:
-        """True when every ``depends_on`` id resolves to a node that is ``done``.
+    def unmet_deps(self, node: MemoryDoc) -> list[str]:
+        """The ``depends_on`` ids that do not resolve to a ``done`` node, in edge order.
 
         ``superseded`` is deliberately not ``done``: a dependent must be rewired to the
-        replacement node (:meth:`validate` flags such an edge).
+        replacement node (:meth:`validate` flags such an edge). An id that resolves to nothing
+        counts as unmet too — a dangling edge is not a met one.
         """
+        unmet = []
         for dep_id in _refs(node, "depends_on"):
             dep = self._typed(dep_id, NODE)
             if dep is None or dep.frontmatter.status != DONE:
-                return False
-        return True
+                unmet.append(dep_id)
+        return unmet
+
+    def deps_met(self, node: MemoryDoc) -> bool:
+        """True when every ``depends_on`` id resolves to a node that is ``done``."""
+        return not self.unmet_deps(node)
 
     # --- queries -------------------------------------------------------------------
 
@@ -316,6 +323,53 @@ class Graph:
         """The first ready node in walk order, briefed for a skill — or ``None`` if idle."""
         ready = self.ready(scope_id, statuses)
         return self.brief(ready[0]) if ready else None
+
+    def claim(
+        self, scope_id: str, node_id: str, statuses: Sequence[str] = ACTIONABLE
+    ) -> dict[str, Any]:
+        """Brief ``node_id`` iff it is claimable in the scope — the "is *this* node mine?" query.
+
+        :meth:`next` answers "what is next in walk order?", which is why an orchestrator's
+        assigned node and an agent's claim can disagree. This asks about one node. The
+        claimable path is a filter over :meth:`ready` — the same list :meth:`next` walks —
+        so the two can never diverge. A miss is diagnosed in :meth:`ready`'s own gate
+        order (scope via :meth:`nodes` with ``done`` supernodes excluded, then status,
+        then :meth:`deps_met`) so ``reason`` names the first failed gate.
+
+        Claimable: the payload :meth:`brief` returns, identical to the walk's. Otherwise
+        ``{"node": None, "reason": ...}``, where ``reason`` is one of these stable strings
+        (they land in orchestrator logs and skill reports):
+
+        ``out-of-scope``
+            the id names no node the scope walks — including an id that resolves to nothing.
+        ``status <s> not in <a,b>``
+            the node is in scope, but its status is not one the caller may act on.
+        ``blocked by <ids>``
+            comma-separated unmet ``depends_on`` ids.
+
+        A non-claimable node is not an error, exactly as an idle scope is not: the caller asked a
+        question and got an answer.
+        """
+        allowed = list(statuses)
+        node = next(
+            (
+                doc
+                for doc in self.nodes(scope_id, include_done_supernodes=False)
+                if doc.id == node_id
+            ),
+            None,
+        )
+        if node is None:
+            return {"node": None, "reason": "out-of-scope"}
+        if any(doc.id == node_id for doc in self.ready(scope_id, allowed)):
+            return self.brief(node)
+        status = node.frontmatter.status
+        if status not in set(allowed):
+            return {"node": None, "reason": f"status {status} not in {','.join(allowed)}"}
+        unmet = self.unmet_deps(node)
+        if unmet:
+            return {"node": None, "reason": f"blocked by {','.join(unmet)}"}
+        return self.brief(node)
 
     def status(self, scope_id: str) -> dict[str, Any]:
         """Node counts by status, per supernode and for the scope as a whole."""

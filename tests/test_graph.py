@@ -349,6 +349,54 @@ def test_next_returns_none_when_nothing_is_ready(graph: Graph) -> None:
     assert graph.next("demo", ["needs-feedback"]) is None
 
 
+# --- claim-check -------------------------------------------------------------------
+
+
+def test_claim_of_a_claimable_node_is_the_walks_own_payload(graph: Graph) -> None:
+    # The whole point: one computation, so the claim and the walk can never disagree.
+    assert graph.claim("demo", "demo-hardening-02") == graph.next("demo")
+
+
+def test_claim_reaches_past_the_walks_first_node(graph: Graph) -> None:
+    # `next` would answer 02; the orchestrator is asking about the node it assigned.
+    payload = graph.claim("demo", "demo-site-01", ["rejected"])
+    assert payload["node"]["id"] == "demo-site-01"
+    assert payload["repository"] == "DemoSite"
+    assert payload["reads"] == ["demo-site-01-plan", "demo-site-01-test"]
+
+
+def test_claim_refuses_a_status_the_caller_may_not_act_on(graph: Graph) -> None:
+    assert graph.claim("demo", "demo-site-01", ["planned", "needs-fix"]) == {
+        "node": None,
+        "reason": "status rejected not in planned,needs-fix",
+    }
+
+
+def test_claim_refuses_a_node_with_an_unmet_dependency(graph: Graph) -> None:
+    assert graph.claim("demo", "demo-hardening-03") == {
+        "node": None,
+        "reason": "blocked by demo-hardening-02",
+    }
+
+
+def test_claim_refuses_a_node_outside_the_scope(graph: Graph) -> None:
+    assert graph.claim("demo-hardening", "demo-site-01", ["rejected"]) == {
+        "node": None,
+        "reason": "out-of-scope",
+    }
+
+
+def test_claim_refuses_an_unknown_id(graph: Graph) -> None:
+    # An id that resolves to nothing is not in the scope's walk either — same gate, same reason.
+    assert graph.claim("demo", "demo-hardening-99") == {"node": None, "reason": "out-of-scope"}
+
+
+def test_claim_on_an_unknown_scope_still_raises(graph: Graph) -> None:
+    # A bad scope is the caller's error, unlike a node that merely isn't claimable.
+    with pytest.raises(GraphError):
+        graph.claim("nope", "demo-hardening-02")
+
+
 def test_repository_is_unknown_when_the_supernode_does_not_resolve(graph_repo: Path) -> None:
     write_node(graph_repo, "demo-orphan", extras={"supernode": "nope"})
     orphan = _graph_of(graph_repo)
@@ -910,6 +958,46 @@ def test_cli_next_is_not_an_error_when_idle(in_graph_repo: Path) -> None:
 def test_cli_next_on_an_unknown_scope_exits_1(in_graph_repo: Path) -> None:
     result = runner.invoke(app, ["graph", "next", "nope"])
     assert result.exit_code == 1
+
+
+def test_cli_next_node_briefs_a_claimable_node(in_graph_repo: Path) -> None:
+    result = runner.invoke(
+        app, ["graph", "next", "demo", "--node", "demo-site-01", "--status", "rejected", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["node"]["id"] == "demo-site-01"
+    assert "reason" not in payload
+
+
+def test_cli_next_node_matches_the_walk_when_it_is_the_first_ready(in_graph_repo: Path) -> None:
+    walked = runner.invoke(app, ["graph", "next", "demo", "--json"])
+    checked = runner.invoke(app, ["graph", "next", "demo", "--node", "demo-hardening-02", "--json"])
+    assert json.loads(checked.output) == json.loads(walked.output)
+
+
+@pytest.mark.parametrize(
+    ("node_id", "statuses", "reason"),
+    [
+        ("demo-site-01", "planned", "status rejected not in planned"),
+        ("demo-hardening-03", "planned", "blocked by demo-hardening-02"),
+        ("demo-hardening-99", "planned", "out-of-scope"),
+    ],
+)
+def test_cli_next_node_reports_which_gate_failed(
+    in_graph_repo: Path, node_id: str, statuses: str, reason: str
+) -> None:
+    result = runner.invoke(
+        app, ["graph", "next", "demo", "--node", node_id, "--status", statuses, "--json"]
+    )
+    assert result.exit_code == 0, result.output  # not claimable is an answer, not an error
+    assert json.loads(result.output) == {"node": None, "reason": reason}
+
+
+def test_cli_next_node_text_output_names_the_reason(in_graph_repo: Path) -> None:
+    result = runner.invoke(app, ["graph", "next", "demo", "--node", "demo-hardening-03"])
+    assert result.exit_code == 0, result.output
+    assert "not claimable (blocked by demo-hardening-02)" in result.output
 
 
 def test_cli_ready(in_graph_repo: Path) -> None:
