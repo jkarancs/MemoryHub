@@ -98,7 +98,7 @@ class Hub:
     def graph(self) -> Graph:
         """A dependency-graph view of the store — see :mod:`memoryhub.graph`.
 
-        Serves ``hub graph next/ready/status/validate`` over a ``workflow``-profile store. The
+        Serves ``hub graph next/claim/ready/status/validate`` over a ``workflow``-profile store. The
         returned :class:`~memoryhub.graph.Graph` is a snapshot of the docs as of this call.
         """
         return Graph(self.all(), self.profile)

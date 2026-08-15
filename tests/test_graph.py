@@ -397,6 +397,76 @@ def test_claim_on_an_unknown_scope_still_raises(graph: Graph) -> None:
         graph.claim("nope", "demo-hardening-02")
 
 
+def _write_done_track(repo: Path, supernode_id: str = "demo-audit") -> str:
+    """A finished supernode plus its one done node — the audit-pin fixture."""
+    write_graph_doc(
+        repo,
+        id=supernode_id,
+        type="supernode",
+        status="done",
+        body="The recorded intent for this finished track.",
+        extras={"project": "demo", "nodes": f"[{supernode_id}-01]"},
+    )
+    write_node(
+        repo,
+        f"{supernode_id}-01",
+        status="done",
+        extras={
+            "subnodes": (
+                f"[{supernode_id}-01-plan, {supernode_id}-01-impl, {supernode_id}-01-test]"
+            ),
+            "attempt": 1,
+        },
+    )
+    write_subnode(repo, f"{supernode_id}-01", "plan", "planned")
+    write_subnode(repo, f"{supernode_id}-01", "impl", "implemented")
+    write_subnode(repo, f"{supernode_id}-01", "test", "done")
+    return supernode_id
+
+
+def test_claim_of_a_done_supernode_briefs_the_body_and_nodes(graph_repo: Path) -> None:
+    _write_done_track(graph_repo)
+    payload = _graph_of(graph_repo).claim("demo", "demo-audit")
+    assert payload["node"]["id"] == "demo-audit"
+    assert payload["node"]["type"] == "supernode"
+    assert payload["node"]["status"] == "done"
+    assert payload["node"]["body"].strip() == "The recorded intent for this finished track."
+    assert payload["supernode"] == "demo-audit"
+    assert payload["project"] == "demo"
+    assert payload["repository"] == "Demo"
+    assert payload["reads"] == ["demo-audit-01"]
+    assert "reason" not in payload
+
+
+def test_claim_of_a_supernode_honours_an_explicit_status_set(graph: Graph) -> None:
+    payload = graph.claim("demo", "demo-hardening", ["in-progress"])
+    assert payload["node"]["id"] == "demo-hardening"
+    assert payload["reads"] == ["demo-hardening-01", "demo-hardening-02", "demo-hardening-03"]
+
+
+def test_claim_refuses_a_supernode_whose_status_is_not_in_the_set(graph: Graph) -> None:
+    # Default for a supernode is `done`; the fixture tracks are still in-progress.
+    assert graph.claim("demo", "demo-hardening") == {
+        "node": None,
+        "reason": "status in-progress not in done",
+    }
+
+
+def test_claim_refuses_a_supernode_outside_the_named_scope(graph_repo: Path) -> None:
+    _write_done_track(graph_repo)
+    assert _graph_of(graph_repo).claim("demo-hardening", "demo-audit") == {
+        "node": None,
+        "reason": "out-of-scope",
+    }
+
+
+def test_claim_of_a_supernode_is_in_scope_when_the_scope_is_itself(graph_repo: Path) -> None:
+    _write_done_track(graph_repo)
+    payload = _graph_of(graph_repo).claim("demo-audit", "demo-audit")
+    assert payload["node"]["id"] == "demo-audit"
+    assert payload["reads"] == ["demo-audit-01"]
+
+
 def test_repository_is_unknown_when_the_supernode_does_not_resolve(graph_repo: Path) -> None:
     write_node(graph_repo, "demo-orphan", extras={"supernode": "nope"})
     orphan = _graph_of(graph_repo)
@@ -998,6 +1068,64 @@ def test_cli_next_node_text_output_names_the_reason(in_graph_repo: Path) -> None
     result = runner.invoke(app, ["graph", "next", "demo", "--node", "demo-hardening-03"])
     assert result.exit_code == 0, result.output
     assert "not claimable (blocked by demo-hardening-02)" in result.output
+
+
+def test_cli_next_node_still_refuses_a_supernode_id(in_graph_repo: Path) -> None:
+    # 05's contract: next --node is node targets only. The claim verb is the other pin.
+    result = runner.invoke(app, ["graph", "next", "demo", "--node", "demo-hardening", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"node": None, "reason": "out-of-scope"}
+
+
+def test_cli_claim_of_a_claimable_node_matches_next_node(in_graph_repo: Path) -> None:
+    walked = runner.invoke(app, ["graph", "next", "demo", "--node", "demo-hardening-02", "--json"])
+    claimed = runner.invoke(app, ["graph", "claim", "demo", "demo-hardening-02", "--json"])
+    assert claimed.exit_code == 0, claimed.output
+    assert json.loads(claimed.output) == json.loads(walked.output)
+
+
+@pytest.mark.parametrize(
+    ("target_id", "statuses", "reason"),
+    [
+        ("demo-site-01", "planned", "status rejected not in planned"),
+        ("demo-hardening-03", "planned", "blocked by demo-hardening-02"),
+        ("demo-hardening-99", "planned", "out-of-scope"),
+    ],
+)
+def test_cli_claim_reports_the_same_node_gates_as_next_node(
+    in_graph_repo: Path, target_id: str, statuses: str, reason: str
+) -> None:
+    result = runner.invoke(
+        app, ["graph", "claim", "demo", target_id, "--status", statuses, "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"node": None, "reason": reason}
+
+
+def test_cli_claim_briefs_a_done_supernode(in_graph_repo: Path) -> None:
+    _write_done_track(in_graph_repo)
+    result = runner.invoke(app, ["graph", "claim", "demo", "demo-audit", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["node"]["id"] == "demo-audit"
+    assert payload["node"]["body"].strip() == "The recorded intent for this finished track."
+    assert payload["reads"] == ["demo-audit-01"]
+
+
+def test_cli_claim_refuses_a_supernode_whose_status_is_not_in_the_set(in_graph_repo: Path) -> None:
+    result = runner.invoke(app, ["graph", "claim", "demo", "demo-hardening", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "node": None,
+        "reason": "status in-progress not in done",
+    }
+
+
+def test_cli_claim_refuses_a_supernode_outside_the_named_scope(in_graph_repo: Path) -> None:
+    _write_done_track(in_graph_repo)
+    result = runner.invoke(app, ["graph", "claim", "demo-hardening", "demo-audit", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"node": None, "reason": "out-of-scope"}
 
 
 def test_cli_ready(in_graph_repo: Path) -> None:

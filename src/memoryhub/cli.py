@@ -459,6 +459,29 @@ def _counts_line(counts: dict[str, int]) -> str:
     return " · ".join(f"{name} {count}" for name, count in items) or "(no nodes)"
 
 
+def _emit_brief(
+    payload: dict[str, Any] | None, json_out: bool, *, refused_id: str | None = None
+) -> None:
+    """Print a next/claim payload, or the idle-scope / not-claimable answer."""
+    if payload is not None and payload.get("node") is None:
+        if json_out:
+            _echo_json(payload)
+        else:
+            typer.secho(f"{refused_id}: not claimable ({payload['reason']})", dim=True)
+        return
+    if json_out:
+        _echo_json(payload)
+        return
+    if payload is None:
+        typer.secho("(nothing ready)", dim=True)
+        return
+    node = payload["node"]
+    typer.secho(f"{node['id']}  {node['status']}  {node['title']}", fg=typer.colors.GREEN)
+    typer.echo(f"  supernode:  {payload['supernode']}")
+    typer.echo(f"  repository: {payload['repository']}")
+    typer.echo(f"  reads:      {', '.join(payload['reads']) or '(none)'}")
+
+
 @graph_app.command("next")
 def graph_next_cmd(
     scope: str = typer.Argument(..., help="Project or supernode id."),
@@ -471,7 +494,8 @@ def graph_next_cmd(
         help="Claim-check this node id instead of walking: the same payload iff it is in SCOPE, "
         "its status is in --status, and its dependencies are done. Otherwise "
         '`{"node": null, "reason": ...}`, where reason is `out-of-scope`, '
-        "`status <s> not in <set>`, or `blocked by <ids>`.",
+        "`status <s> not in <set>`, or `blocked by <ids>`. A supernode id is "
+        "`out-of-scope` — use `graph claim` for audit pins.",
     ),
     json_out: bool = typer.Option(False, "--json", help="Emit the payload as JSON."),
 ) -> None:
@@ -486,27 +510,37 @@ def graph_next_cmd(
         payload = (
             graph.next(scope, _statuses(status))
             if node_id is None
-            else graph.claim(scope, node_id, _statuses(status))
+            else graph._claim_node(scope, node_id, _statuses(status))
         )
     except GraphError as exc:
         _fail(str(exc))
-    if payload is not None and payload.get("node") is None:  # a --node that isn't claimable
-        if json_out:
-            _echo_json(payload)
-        else:
-            typer.secho(f"{node_id}: not claimable ({payload['reason']})", dim=True)
-        return
-    if json_out:
-        _echo_json(payload)
-        return
-    if payload is None:
-        typer.secho("(nothing ready)", dim=True)
-        return
-    node = payload["node"]
-    typer.secho(f"{node['id']}  {node['status']}  {node['title']}", fg=typer.colors.GREEN)
-    typer.echo(f"  supernode:  {payload['supernode']}")
-    typer.echo(f"  repository: {payload['repository']}")
-    typer.echo(f"  reads:      {', '.join(payload['reads']) or '(none)'}")
+    _emit_brief(payload, json_out, refused_id=node_id)
+
+
+@graph_app.command("claim")
+def graph_claim_cmd(
+    scope: str = typer.Argument(..., help="Project or supernode id."),
+    target_id: str = typer.Argument(..., help="Node or supernode id to claim-check."),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Comma-separated statuses. Omitted, defaults per resolved type: every "
+        "actionable node status, or `done` for a supernode.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit the payload as JSON."),
+) -> None:
+    """Brief TARGET_ID iff it is claimable in SCOPE — a node or a finished supernode.
+
+    A node target uses the same gates as `graph next --node`. A supernode target is
+    claimable when it is in SCOPE and its status is in --status (default: `done`). A
+    non-claimable target prints its reason and exits 0.
+    """
+    graph = _open_graph()
+    try:
+        payload = graph.claim(scope, target_id, None if status is None else _statuses(status))
+    except GraphError as exc:
+        _fail(str(exc))
+    _emit_brief(payload, json_out, refused_id=target_id)
 
 
 @graph_app.command("ready")

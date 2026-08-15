@@ -12,7 +12,7 @@ cross-links and is already warned on by ``hub validate``.
 
 The queries:
   * :meth:`Graph.next` — the single next actionable node in a scope (the skill entry point).
-  * :meth:`Graph.claim` — is *this* node claimable in the scope? (the orchestrator entry point).
+  * :meth:`Graph.claim` — is *this* node or supernode claimable in the scope?
   * :meth:`Graph.ready` — every ready node, in walk order.
   * :meth:`Graph.status` — counts by status per supernode (the ``PROGRESS.md`` replacement).
   * :meth:`Graph.validate` — the graph invariants a per-file schema check can't see, split into
@@ -325,32 +325,47 @@ class Graph:
         return self.brief(ready[0]) if ready else None
 
     def claim(
-        self, scope_id: str, node_id: str, statuses: Sequence[str] = ACTIONABLE
+        self,
+        scope_id: str,
+        target_id: str,
+        statuses: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        """Brief ``node_id`` iff it is claimable in the scope — the "is *this* node mine?" query.
+        """Brief ``target_id`` iff it is claimable in the scope — node or supernode.
 
         :meth:`next` answers "what is next in walk order?", which is why an orchestrator's
-        assigned node and an agent's claim can disagree. This asks about one node. The
-        claimable path is a filter over :meth:`ready` — the same list :meth:`next` walks —
-        so the two can never diverge. A miss is diagnosed in :meth:`ready`'s own gate
-        order (scope via :meth:`nodes` with ``done`` supernodes excluded, then status,
-        then :meth:`deps_met`) so ``reason`` names the first failed gate.
+        assigned pin and an agent's claim can disagree. This asks about one id. A node
+        target uses the node branch :meth:`next` ``--node`` also runs, so the two can
+        never diverge on a node. A supernode target is the audit-pin case: in scope and
+        status in the set. ``statuses is None`` means the default for whatever the id
+        resolved to — :data:`ACTIONABLE` for a node, ``done`` for a supernode.
 
-        Claimable: the payload :meth:`brief` returns, identical to the walk's. Otherwise
+        Claimable: a brief that mirrors :meth:`brief` key-for-key. Otherwise
         ``{"node": None, "reason": ...}``, where ``reason`` is one of these stable strings
         (they land in orchestrator logs and skill reports):
 
         ``out-of-scope``
-            the id names no node the scope walks — including an id that resolves to nothing.
+            the id names no target the scope walks — including an id that resolves to nothing.
         ``status <s> not in <a,b>``
-            the node is in scope, but its status is not one the caller may act on.
+            the target is in scope, but its status is not one the caller may act on.
         ``blocked by <ids>``
-            comma-separated unmet ``depends_on`` ids.
+            comma-separated unmet ``depends_on`` ids (nodes only; supernodes have none).
 
-        A non-claimable node is not an error, exactly as an idle scope is not: the caller asked a
-        question and got an answer.
+        A non-claimable target is not an error, exactly as an idle scope is not: the caller
+        asked a question and got an answer.
         """
-        allowed = list(statuses)
+        target = self.by_id.get(target_id)
+        if target is not None and target.type == SUPERNODE:
+            return self._claim_supernode(scope_id, target, statuses)
+        return self._claim_node(scope_id, target_id, statuses)
+
+    def _claim_node(
+        self,
+        scope_id: str,
+        node_id: str,
+        statuses: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """The node-target half of :meth:`claim` — also what ``graph next --node`` runs."""
+        allowed = list(statuses if statuses is not None else ACTIONABLE)
         node = next(
             (
                 doc
@@ -370,6 +385,36 @@ class Graph:
         if unmet:
             return {"node": None, "reason": f"blocked by {','.join(unmet)}"}
         return self.brief(node)
+
+    def _claim_supernode(
+        self,
+        scope_id: str,
+        supernode: MemoryDoc,
+        statuses: Sequence[str] | None,
+    ) -> dict[str, Any]:
+        """The supernode-target half of :meth:`claim` — in scope, then status."""
+        allowed = list(statuses if statuses is not None else (DONE,))
+        if not any(doc.id == supernode.id for doc in self.supernodes(scope_id)):
+            return {"node": None, "reason": "out-of-scope"}
+        status = supernode.frontmatter.status
+        if status not in set(allowed):
+            return {"node": None, "reason": f"status {status} not in {','.join(allowed)}"}
+        return self._brief_supernode(supernode)
+
+    def _brief_supernode(self, supernode: MemoryDoc) -> dict[str, Any]:
+        """A :meth:`brief`-shaped payload for a supernode (audit pins read the body)."""
+        payload = flat_frontmatter(supernode.frontmatter, self.profile)
+        payload["path"] = str(supernode.path) if supernode.path else None
+        payload["body"] = supernode.body
+        project_id = _ref(supernode, PROJECT)
+        project = self._typed(project_id or "", PROJECT)
+        return {
+            "node": payload,
+            "supernode": supernode.id,
+            "project": project_id,
+            "repository": _ref(project, "repository") if project is not None else None,
+            "reads": _refs(supernode, "nodes"),
+        }
 
     def status(self, scope_id: str) -> dict[str, Any]:
         """Node counts by status, per supernode and for the scope as a whole."""
