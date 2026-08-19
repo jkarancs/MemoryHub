@@ -14,6 +14,9 @@ The queries:
   * :meth:`Graph.next` — the single next actionable node in a scope (the skill entry point).
   * :meth:`Graph.claim` — is *this* node or supernode claimable in the scope?
   * :meth:`Graph.ready` — every ready node, in walk order.
+  * :meth:`Graph.ready_many` — :meth:`ready` for many scopes from this one snapshot.
+  * :meth:`Graph.get_many` — batched document lookup (missing ids are ``None``).
+  * :meth:`Graph.referring` — exact reverse-edge lookup on one frontmatter field.
   * :meth:`Graph.status` — counts by status per supernode (the ``PROGRESS.md`` replacement).
   * :meth:`Graph.validate` — the graph invariants a per-file schema check can't see, split into
     fatal issues and non-fatal warnings.
@@ -21,7 +24,7 @@ The queries:
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -141,6 +144,25 @@ def _ref(doc: MemoryDoc, field: str) -> str | None:
     return ids[0] if ids else None
 
 
+def _first_unique(ids: Sequence[str]) -> list[str]:
+    """``ids`` with later duplicates dropped, first-seen order kept."""
+    seen: dict[str, None] = {}
+    for item in ids:
+        if item not in seen:
+            seen[item] = None
+    return list(seen)
+
+
+def _exact_ids(value: Any) -> list[str]:
+    """Ids held by a frontmatter value — a string scalar, or the string items of a list."""
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+    return []
+
+
 def _expected_supernode_status(nodes: Iterable[MemoryDoc]) -> str:
     """The supernode status plan §3.3 derives from its nodes, in the rule's stated order.
 
@@ -167,11 +189,54 @@ class Graph:
         self.docs = list(docs)
         self.profile = profile
         self.by_id: dict[str, MemoryDoc] = {doc.id: doc for doc in self.docs}
+        self._by_type: dict[str, list[MemoryDoc]] = defaultdict(list)
+        self._supernodes_by_project: dict[str, list[MemoryDoc]] = defaultdict(list)
+        self._nodes_by_supernode: dict[str, list[MemoryDoc]] = defaultdict(list)
+        self._ordered_nodes_by_supernode: dict[str, list[MemoryDoc]] = {}
+        self._referrers: dict[tuple[str, str], list[MemoryDoc]] = defaultdict(list)
+        self._index()
+
+    def _index(self) -> None:
+        """Build membership and reverse-edge indexes once so walks do not rescan ``docs``."""
+        for doc in self.docs:
+            self._by_type[doc.type].append(doc)
+            if doc.type == SUPERNODE:
+                project_id = _ref(doc, PROJECT)
+                if project_id:
+                    self._supernodes_by_project[project_id].append(doc)
+            elif doc.type == NODE:
+                supernode_id = _ref(doc, SUPERNODE)
+                if supernode_id:
+                    self._nodes_by_supernode[supernode_id].append(doc)
+            if doc.frontmatter.related:
+                for target in doc.frontmatter.related:
+                    self._referrers[("related", target)].append(doc)
+            for field, value in doc.frontmatter.extra.items():
+                for target in _exact_ids(value):
+                    self._referrers[(field, target)].append(doc)
+        for found in self._supernodes_by_project.values():
+            found.sort(key=lambda d: (_SUPERNODE_ORDER.get(d.frontmatter.status, 9), d.id))
+        for supernode in self._by_type[SUPERNODE]:
+            self._ordered_nodes_by_supernode[supernode.id] = self._order_supernode_nodes(supernode)
+
+    def _order_supernode_nodes(self, supernode: MemoryDoc) -> list[MemoryDoc]:
+        """Listed-first, then unlisted claimants id-sorted — the walk ``nodes`` promises."""
+        listed = [
+            node
+            for node in (self._typed(ref, NODE) for ref in _refs(supernode, "nodes"))
+            if node is not None
+        ]
+        seen = {node.id for node in listed}
+        unlisted = sorted(
+            (node for node in self._nodes_by_supernode[supernode.id] if node.id not in seen),
+            key=lambda node: node.id,
+        )
+        return [*listed, *unlisted]
 
     # --- lookups -------------------------------------------------------------------
 
     def _of_type(self, type_name: str) -> list[MemoryDoc]:
-        return [doc for doc in self.docs if doc.type == type_name]
+        return list(self._by_type[type_name])
 
     def _typed(self, id: str, type_name: str) -> MemoryDoc | None:
         doc = self.by_id.get(id)
@@ -195,29 +260,17 @@ class Graph:
         if scope.type == SUPERNODE:
             found = [scope]
         else:
-            found = [doc for doc in self._of_type(SUPERNODE) if _ref(doc, PROJECT) == scope_id]
-            found.sort(key=lambda d: (_SUPERNODE_ORDER.get(d.frontmatter.status, 9), d.id))
+            found = list(self._supernodes_by_project[scope_id])
         if not include_done:
             found = [doc for doc in found if doc.frontmatter.status != DONE]
         return found
 
     def _supernode_nodes(self, supernode: MemoryDoc) -> list[MemoryDoc]:
         """Its nodes: the ``nodes`` list order first, then any unlisted claimant, id-sorted."""
-        listed = [
-            node
-            for node in (self._typed(ref, NODE) for ref in _refs(supernode, "nodes"))
-            if node is not None
-        ]
-        seen = {node.id for node in listed}
-        unlisted = sorted(
-            (
-                node
-                for node in self._of_type(NODE)
-                if _ref(node, SUPERNODE) == supernode.id and node.id not in seen
-            ),
-            key=lambda node: node.id,
-        )
-        return [*listed, *unlisted]
+        cached = self._ordered_nodes_by_supernode.get(supernode.id)
+        if cached is not None:
+            return list(cached)
+        return self._order_supernode_nodes(supernode)
 
     def nodes(self, scope_id: str, *, include_done_supernodes: bool = True) -> list[MemoryDoc]:
         """Every node in the scope, in walk order (supernode order, then node order)."""
@@ -277,6 +330,51 @@ class Graph:
             for node in self.nodes(scope_id, include_done_supernodes=False)
             if node.frontmatter.status in allowed and (include_blocked or self.deps_met(node))
         ]
+
+    def ready_many(
+        self,
+        scope_ids: Sequence[str],
+        statuses: Sequence[str] = ACTIONABLE,
+        *,
+        include_blocked: bool = False,
+    ) -> dict[str, dict[str, Any]]:
+        """:meth:`ready` for each scope, from this snapshot, keyed by first-seen scope id.
+
+        A reachable project/supernode maps to ``{"ok": True, "nodes": [...]}`` with the same
+        walk order, status filter, and ``include_blocked`` behaviour as :meth:`ready`. A
+        missing id or a non-scope document maps to ``{"ok": False, "error": ...}`` instead of
+        raising — later duplicate ids are ignored so each key appears once.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for scope_id in _first_unique(scope_ids):
+            try:
+                nodes = self.ready(scope_id, statuses, include_blocked=include_blocked)
+            except GraphError as exc:
+                out[scope_id] = {"ok": False, "error": str(exc)}
+            else:
+                out[scope_id] = {"ok": True, "nodes": nodes}
+        return out
+
+    def get_many(self, ids: Sequence[str]) -> dict[str, MemoryDoc | None]:
+        """Each id's document, or ``None`` when it is not in this snapshot.
+
+        Later duplicate ids are ignored so each key appears once, in first-seen order.
+        """
+        out: dict[str, MemoryDoc | None] = {}
+        for doc_id in _first_unique(ids):
+            out[doc_id] = self.by_id.get(doc_id)
+        return out
+
+    def referring(self, ids: Sequence[str], field: str) -> dict[str, list[MemoryDoc]]:
+        """Documents whose ``field`` holds each id as an exact scalar or list member.
+
+        Later duplicate ids are ignored so each key appears once, in first-seen order. An id
+        nothing points at — including one that is not in the store — maps to an empty list.
+        """
+        out: dict[str, list[MemoryDoc]] = {}
+        for target in _first_unique(ids):
+            out[target] = list(self._referrers[(field, target)])
+        return out
 
     def reads_for(self, node: MemoryDoc) -> list[str]:
         """Subnode ids the skill acting on ``node`` needs, newest per role (see STATUS_READS)."""

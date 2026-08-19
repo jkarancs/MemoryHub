@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from . import loader, query, writer
 from .bundle import Bundle
 from .config import Config, load_config
 from .embeddings import EmbeddingError, content_hash
-from .graph import Graph
+from .graph import ACTIONABLE, Graph
 from .index import IndexWarning, ReindexStats, VectorIndex
 from .loader import StoreReport
 from .models import MemoryDoc
@@ -76,6 +77,14 @@ class Hub:
                 return doc
         raise KeyError(f"no memory with id {id!r}")
 
+    def get_many(self, ids: Sequence[str]) -> dict[str, MemoryDoc | None]:
+        """Each id's document from one store load, or ``None`` when missing.
+
+        Later duplicate ids are ignored so each key appears once, in first-seen order.
+        Unlike :meth:`get`, a missing id is an outcome, not an exception.
+        """
+        return self.graph().get_many(ids)
+
     def filter(self, **kw: Any) -> list[MemoryDoc]:
         return query.filter(self.all(), **kw)
 
@@ -98,10 +107,25 @@ class Hub:
     def graph(self) -> Graph:
         """A dependency-graph view of the store — see :mod:`memoryhub.graph`.
 
-        Serves ``hub graph next/claim/ready/status/validate`` over a ``workflow``-profile store. The
-        returned :class:`~memoryhub.graph.Graph` is a snapshot of the docs as of this call.
+        Serves ``hub graph next/claim/ready/bulk/status/validate`` over a ``workflow``-profile
+        store. The returned :class:`~memoryhub.graph.Graph` is a snapshot of the docs as of
+        this call.
         """
         return Graph(self.all(), self.profile)
+
+    def ready_many(
+        self,
+        scope_ids: Sequence[str],
+        statuses: Sequence[str] = ACTIONABLE,
+        *,
+        include_blocked: bool = False,
+    ) -> dict[str, dict[str, Any]]:
+        """Ready nodes for many scopes from one store snapshot — see :meth:`Graph.ready_many`."""
+        return self.graph().ready_many(scope_ids, statuses, include_blocked=include_blocked)
+
+    def referring(self, ids: Sequence[str], field: str) -> dict[str, list[MemoryDoc]]:
+        """Exact reverse-edge lookup from one store snapshot — see :meth:`Graph.referring`."""
+        return self.graph().referring(ids, field)
 
     # --- writes ------------------------------------------------------------------
 

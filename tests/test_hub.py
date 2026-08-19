@@ -27,6 +27,14 @@ def test_get_missing_raises_keyerror(hub: Hub) -> None:
         hub.get("nope")
 
 
+def test_get_many_keeps_first_seen_order_and_returns_none_for_missing(hub: Hub) -> None:
+    got = hub.get_many(["skill-async-python", "nope", "skill-async-python", "skill-sql"])
+    assert list(got) == ["skill-async-python", "nope", "skill-sql"]
+    assert got["skill-async-python"] is hub.get("skill-async-python")
+    assert got["nope"] is None
+    assert got["skill-sql"].id == "skill-sql"
+
+
 def test_filter_and_fulltext_delegate(hub: Hub) -> None:
     assert {d.id for d in hub.filter(type="skill")} == {
         "skill-async-python",

@@ -577,6 +577,103 @@ def graph_ready_cmd(
         _print_table(docs)
 
 
+def _ready_scope_payload(graph: Graph, result: dict[str, Any], *, full: bool) -> dict[str, Any]:
+    """Serialize one :meth:`Graph.ready_many` scope result for the bulk JSON contract."""
+    if not result["ok"]:
+        return {"ok": False, "error": result["error"]}
+    nodes = result["nodes"]
+    serialized = (
+        [graph.brief(doc) for doc in nodes]
+        if full
+        else [_doc_summary(doc, graph.profile) for doc in nodes]
+    )
+    return {"ok": True, "nodes": serialized}
+
+
+def _doc_payload(doc: MemoryDoc, profile: Profile | None) -> dict[str, Any]:
+    """The ``hub get --json`` shape: frontmatter summary plus body."""
+    payload = _doc_summary(doc, profile)
+    payload["body"] = doc.body
+    return payload
+
+
+@graph_app.command("bulk")
+def graph_bulk_cmd(
+    ready: str | None = typer.Option(
+        None,
+        "--ready",
+        help="Comma-separated project or supernode ids to query for ready nodes.",
+    ),
+    get_ids: str | None = typer.Option(
+        None,
+        "--get",
+        help="Comma-separated document ids to retrieve.",
+    ),
+    referring: str | None = typer.Option(
+        None,
+        "--referring",
+        help="Comma-separated ids to look up as exact reverse-edge targets.",
+    ),
+    field: str | None = typer.Option(
+        None,
+        "--field",
+        help="Frontmatter field for --referring (exact scalar or list membership).",
+    ),
+    status: str | None = typer.Option(
+        None, "--status", help="Comma-separated node statuses (default: every actionable one)."
+    ),
+    include_blocked: bool = typer.Option(
+        False,
+        "--include-blocked",
+        help="Also list nodes whose dependencies aren't done (the human queue: a person's "
+        "decision doesn't wait on unbuilt code).",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Emit each ready node as a `graph next` payload (body, repository, reads) instead "
+        "of a frontmatter summary.",
+    ),
+) -> None:
+    """Ready, get, and exact reverse-edge queries from one store snapshot (always JSON).
+
+    Opens the store once and reuses that Hub/Graph for every requested lookup. Missing
+    scopes and document ids are outcomes in the payload, not errors. Duplicate ids are
+    dropped after the first occurrence so each result key appears once.
+    """
+    ready_ids = _split_csv(ready)
+    doc_ids = _split_csv(get_ids)
+    referring_ids = _split_csv(referring)
+    if not ready_ids and not doc_ids and not referring_ids:
+        _fail("graph bulk needs --ready, --get, and/or --referring")
+    if referring_ids and not field:
+        _fail("--referring requires --field")
+    if field and not referring_ids:
+        _fail("--field is only used with --referring")
+
+    graph = _open_graph()
+    payload: dict[str, Any] = {}
+    if ready_ids:
+        payload["ready"] = {
+            scope_id: _ready_scope_payload(graph, result, full=full)
+            for scope_id, result in graph.ready_many(
+                ready_ids, _statuses(status), include_blocked=include_blocked
+            ).items()
+        }
+    if doc_ids:
+        payload["docs"] = {
+            doc_id: None if doc is None else _doc_payload(doc, graph.profile)
+            for doc_id, doc in graph.get_many(doc_ids).items()
+        }
+    if referring_ids:
+        assert field is not None  # required above
+        payload["referring"] = {
+            target: [_doc_summary(doc, graph.profile) for doc in docs]
+            for target, docs in graph.referring(referring_ids, field).items()
+        }
+    _echo_json(payload)
+
+
 @graph_app.command("status")
 def graph_status_cmd(
     scope: str = typer.Argument(..., help="Project or supernode id."),

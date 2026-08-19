@@ -16,7 +16,7 @@ from conftest import write_graph_doc, write_node, write_subnode
 from memoryhub.cli import app
 from memoryhub.graph import Graph, GraphError
 from memoryhub.hub import Hub
-from memoryhub.loader import StoreReport
+from memoryhub.loader import StoreReport, load_all
 
 runner = CliRunner()
 
@@ -1237,3 +1237,226 @@ def test_cli_validate_reports_and_exits_1(in_graph_repo: Path) -> None:
     report = json.loads(result.output)
     assert report["valid"] is False
     assert report["issues"][0]["field"] == "depends_on"
+
+
+# --- bulk reads --------------------------------------------------------------------
+
+
+def _write_other_project(repo: Path) -> None:
+    """A second project in the same store so mixed-scope ready queries have two walks."""
+    write_graph_doc(
+        repo, id="other", type="project", status="active", extras={"repository": "Other"}
+    )
+    write_graph_doc(
+        repo,
+        id="other-track",
+        type="supernode",
+        status="in-progress",
+        extras={"project": "other", "nodes": "[other-track-01]"},
+    )
+    write_node(
+        repo,
+        "other-track-01",
+        extras={"supernode": "other-track", "subnodes": "[other-track-01-plan]"},
+    )
+    write_subnode(repo, "other-track-01", "plan", "planned")
+
+
+def test_construction_indexes_membership_in_walk_order(graph_repo: Path) -> None:
+    write_graph_doc(
+        graph_repo,
+        id="demo-backlog",
+        type="supernode",
+        status="planned",
+        extras={"project": "demo", "nodes": "[]"},
+    )
+    write_node(graph_repo, "demo-hardening-05")
+    write_node(graph_repo, "demo-hardening-04")
+    graph = _graph_of(graph_repo)
+    assert [doc.id for doc in graph._supernodes_by_project["demo"]] == [
+        "demo-hardening",
+        "demo-site",
+        "demo-backlog",
+    ]
+    assert [doc.id for doc in graph.supernodes("demo")] == [
+        "demo-hardening",
+        "demo-site",
+        "demo-backlog",
+    ]
+    assert [doc.id for doc in graph._ordered_nodes_by_supernode["demo-hardening"]] == [
+        "demo-hardening-01",
+        "demo-hardening-02",
+        "demo-hardening-03",
+        "demo-hardening-04",
+        "demo-hardening-05",
+    ]
+    assert [doc.id for doc in graph.nodes("demo-hardening")] == [
+        "demo-hardening-01",
+        "demo-hardening-02",
+        "demo-hardening-03",
+        "demo-hardening-04",
+        "demo-hardening-05",
+    ]
+
+
+def test_ready_many_matches_scalar_ready_across_projects(graph_repo: Path) -> None:
+    _write_other_project(graph_repo)
+    graph = _graph_of(graph_repo)
+    bulk = graph.ready_many(
+        ["demo", "other", "demo", "nope", "demo-hardening-01"],
+        ["planned", "rejected"],
+    )
+    assert list(bulk) == ["demo", "other", "nope", "demo-hardening-01"]
+    assert bulk["demo"]["ok"] is True
+    assert [doc.id for doc in bulk["demo"]["nodes"]] == [
+        doc.id for doc in graph.ready("demo", ["planned", "rejected"])
+    ]
+    assert [doc.id for doc in bulk["other"]["nodes"]] == [
+        doc.id for doc in graph.ready("other", ["planned", "rejected"])
+    ]
+    assert bulk["nope"] == {"ok": False, "error": "no document with id 'nope'"}
+    assert bulk["demo-hardening-01"] == {
+        "ok": False,
+        "error": "scope 'demo-hardening-01' is a node; expected a project or supernode",
+    }
+
+
+def test_ready_many_preserves_include_blocked(graph: Graph) -> None:
+    bulk = graph.ready_many(["demo"], include_blocked=True)
+    assert [doc.id for doc in bulk["demo"]["nodes"]] == [
+        doc.id for doc in graph.ready("demo", include_blocked=True)
+    ]
+
+
+def test_hub_ready_many_matches_graph(graph_repo: Path) -> None:
+    hub = Hub(graph_repo)
+    assert hub.ready_many(["demo", "demo-site"]) == hub.graph().ready_many(["demo", "demo-site"])
+
+
+def test_get_many_missing_and_duplicates(graph: Graph) -> None:
+    got = graph.get_many(["demo-hardening-02", "nope", "demo-hardening-02"])
+    assert list(got) == ["demo-hardening-02", "nope"]
+    assert got["demo-hardening-02"] is graph.by_id["demo-hardening-02"]
+    assert got["nope"] is None
+
+
+def test_referring_is_exact_membership_not_substring(graph: Graph) -> None:
+    hits = graph.referring(
+        ["demo-hardening-01", "demo-hardening-0", "demo-hardening-01"], "depends_on"
+    )
+    assert list(hits) == ["demo-hardening-01", "demo-hardening-0"]
+    assert [doc.id for doc in hits["demo-hardening-01"]] == ["demo-hardening-02"]
+    assert hits["demo-hardening-0"] == []
+    assert [
+        doc.id for doc in graph.referring(["demo-hardening-02"], "depends_on")["demo-hardening-02"]
+    ] == ["demo-hardening-03"]
+
+
+def test_referring_indexes_related(graph_repo: Path) -> None:
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        related="[demo-hardening-01]",
+    )
+    graph = _graph_of(graph_repo)
+    hits = graph.referring(["demo-hardening-01"], "related")
+    assert [doc.id for doc in hits["demo-hardening-01"]] == ["demo-hardening-04"]
+
+
+def test_cli_bulk_ready_matches_scalar_ready(in_graph_repo: Path) -> None:
+    _write_other_project(in_graph_repo)
+    scalar_demo = runner.invoke(app, ["graph", "ready", "demo", "--full"])
+    scalar_other = runner.invoke(app, ["graph", "ready", "other", "--full"])
+    bulk = runner.invoke(
+        app,
+        ["graph", "bulk", "--ready", "demo,other,demo,nope", "--full"],
+    )
+    assert bulk.exit_code == 0, bulk.output
+    payload = json.loads(bulk.output)
+    assert payload["ready"]["demo"] == {"ok": True, "nodes": json.loads(scalar_demo.output)}
+    assert payload["ready"]["other"] == {"ok": True, "nodes": json.loads(scalar_other.output)}
+    assert payload["ready"]["nope"] == {"ok": False, "error": "no document with id 'nope'"}
+    assert list(payload["ready"]) == ["demo", "other", "nope"]
+
+
+def test_cli_bulk_ready_include_blocked_matches_scalar(in_graph_repo: Path) -> None:
+    scalar = runner.invoke(app, ["graph", "ready", "demo", "--include-blocked", "--json"])
+    bulk = runner.invoke(app, ["graph", "bulk", "--ready", "demo", "--include-blocked"])
+    assert bulk.exit_code == 0, bulk.output
+    assert json.loads(bulk.output)["ready"]["demo"]["nodes"] == json.loads(scalar.output)
+
+
+def test_cli_bulk_get_matches_scalar_get(in_graph_repo: Path) -> None:
+    scalar = runner.invoke(app, ["get", "demo-hardening-02", "--json"])
+    bulk = runner.invoke(
+        app, ["graph", "bulk", "--get", "demo-hardening-02,nope,demo-hardening-02"]
+    )
+    assert bulk.exit_code == 0, bulk.output
+    docs = json.loads(bulk.output)["docs"]
+    assert list(docs) == ["demo-hardening-02", "nope"]
+    assert docs["demo-hardening-02"] == json.loads(scalar.output)
+    assert docs["nope"] is None
+
+
+def test_cli_bulk_referring_matches_exact_edges(in_graph_repo: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "graph",
+            "bulk",
+            "--referring",
+            "demo-hardening-01,demo-hardening-0",
+            "--field",
+            "depends_on",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    referring = json.loads(result.output)["referring"]
+    assert [row["id"] for row in referring["demo-hardening-01"]] == ["demo-hardening-02"]
+    assert referring["demo-hardening-0"] == []
+
+
+def test_cli_bulk_loads_the_store_once(
+    in_graph_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = {"n": 0}
+
+    def counting(config: object) -> object:
+        calls["n"] += 1
+        return load_all(config)
+
+    monkeypatch.setattr("memoryhub.loader.load_all", counting)
+    result = runner.invoke(
+        app,
+        [
+            "graph",
+            "bulk",
+            "--ready",
+            "demo,demo-site",
+            "--get",
+            "demo-hardening-02,demo-site-01",
+            "--referring",
+            "demo-hardening-01",
+            "--field",
+            "depends_on",
+            "--full",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls["n"] == 1
+    payload = json.loads(result.output)
+    assert payload["ready"]["demo"]["ok"] is True
+    assert payload["docs"]["demo-hardening-02"]["id"] == "demo-hardening-02"
+    assert [row["id"] for row in payload["referring"]["demo-hardening-01"]] == ["demo-hardening-02"]
+
+
+def test_cli_bulk_requires_a_query(in_graph_repo: Path) -> None:
+    result = runner.invoke(app, ["graph", "bulk"])
+    assert result.exit_code == 1
+    assert "needs --ready" in result.output
+
+
+def test_cli_bulk_referring_requires_field(in_graph_repo: Path) -> None:
+    result = runner.invoke(app, ["graph", "bulk", "--referring", "demo-hardening-01"])
+    assert result.exit_code == 1
+    assert "--referring requires --field" in result.output
