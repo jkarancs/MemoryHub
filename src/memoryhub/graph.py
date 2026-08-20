@@ -159,7 +159,16 @@ def _exact_ids(value: Any) -> list[str]:
         text = value.strip()
         return [text] if text else []
     if isinstance(value, list):
-        return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+        found: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text and text not in seen:
+                seen.add(text)
+                found.append(text)
+        return found
     return []
 
 
@@ -208,9 +217,8 @@ class Graph:
                 supernode_id = _ref(doc, SUPERNODE)
                 if supernode_id:
                     self._nodes_by_supernode[supernode_id].append(doc)
-            if doc.frontmatter.related:
-                for target in doc.frontmatter.related:
-                    self._referrers[("related", target)].append(doc)
+            for target in _exact_ids(doc.frontmatter.related):
+                self._referrers[("related", target)].append(doc)
             for field, value in doc.frontmatter.extra.items():
                 for target in _exact_ids(value):
                     self._referrers[(field, target)].append(doc)

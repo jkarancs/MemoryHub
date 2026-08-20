@@ -1363,6 +1363,22 @@ def test_referring_indexes_related(graph_repo: Path) -> None:
     assert [doc.id for doc in hits["demo-hardening-01"]] == ["demo-hardening-04"]
 
 
+def test_referring_returns_each_document_once_for_duplicate_members(graph_repo: Path) -> None:
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        related="[demo-hardening-01, demo-hardening-01]",
+        extras={"depends_on": "[demo-hardening-01, demo-hardening-01]"},
+    )
+    graph = _graph_of(graph_repo)
+    assert [
+        doc.id for doc in graph.referring(["demo-hardening-01"], "related")["demo-hardening-01"]
+    ] == ["demo-hardening-04"]
+    assert [
+        doc.id for doc in graph.referring(["demo-hardening-01"], "depends_on")["demo-hardening-01"]
+    ] == ["demo-hardening-02", "demo-hardening-04"]
+
+
 def test_cli_bulk_ready_matches_scalar_ready(in_graph_repo: Path) -> None:
     _write_other_project(in_graph_repo)
     scalar_demo = runner.invoke(app, ["graph", "ready", "demo", "--full"])
