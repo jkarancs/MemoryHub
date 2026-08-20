@@ -133,6 +133,27 @@ def test_ready_treats_feedback_ready_as_another_human_gate(graph_repo: Path) -> 
     assert "demo-hardening-04" in [doc.id for doc in graph.ready("demo", include_blocked=True)]
 
 
+def test_ready_treats_draft_ready_as_another_human_gate(graph_repo: Path) -> None:
+    write_node(
+        graph_repo,
+        "demo-hardening-04",
+        status="draft-ready",
+        extras={
+            "depends_on": "[demo-hardening-03]",
+            "subnodes": "[demo-hardening-04-plan, demo-hardening-04-critique]",
+        },
+    )
+    write_subnode(graph_repo, "demo-hardening-04", "plan", "planned")
+    write_subnode(graph_repo, "demo-hardening-04", "critique", "draft-ready")
+    graph = _graph_of(graph_repo)
+    assert graph.validate().ok
+    assert graph.ready("demo", ["draft-ready"]) == []
+    assert [doc.id for doc in graph.ready("demo", ["draft-ready"], include_blocked=True)] == [
+        "demo-hardening-04"
+    ]
+    assert "demo-hardening-04" in [doc.id for doc in graph.ready("demo", include_blocked=True)]
+
+
 def test_ready_skips_done_supernodes(graph_repo: Path) -> None:
     write_graph_doc(
         graph_repo,
@@ -312,6 +333,47 @@ def test_next_on_a_feedback_ready_node_hands_the_human_the_prepared_decision(
         "demo-hardening-04-test",
         "demo-hardening-04-prep",
     ]
+
+
+def test_next_on_planning_statuses_reads_newest_planning_roles_only(graph_repo: Path) -> None:
+    expected_reads = [
+        "{node}-plan",
+        "{node}-draft2",
+        "{node}-critique2",
+        "{node}-fdbk",
+    ]
+    for seq, status in (("04", "drafting"), ("05", "draft-ready")):
+        node = f"demo-hardening-{seq}"
+        subnodes = (
+            f"[{node}-plan, {node}-draft, {node}-draft2, {node}-critique, "
+            f"{node}-critique2, {node}-fdbk, {node}-prep, {node}-impl, {node}-test]"
+        )
+        write_node(
+            graph_repo,
+            node,
+            status=status,
+            extras={"subnodes": subnodes, "attempt": 1},
+        )
+        for suffix, role, verdict in (
+            ("plan", "plan", "planned"),
+            ("draft", "draft", "drafting"),
+            ("draft2", "draft", "drafting"),
+            ("critique", "critique", "drafting"),
+            ("critique2", "critique", "drafting"),
+            ("fdbk", "fdbk", "drafting"),
+            ("prep", "prep", "draft-ready"),
+            ("impl", "impl", "implemented"),
+            ("test", "test", status),
+        ):
+            write_subnode(graph_repo, node, role, verdict, suffix=suffix)
+
+    graph = _graph_of(graph_repo)
+    for seq, status in (("04", "drafting"), ("05", "draft-ready")):
+        node = f"demo-hardening-{seq}"
+        payload = graph.next("demo-hardening", [status])
+        assert payload is not None
+        assert payload["node"]["id"] == node
+        assert payload["reads"] == [item.format(node=node) for item in expected_reads]
 
 
 def test_next_on_a_node_prep_sent_to_needs_fix_reads_the_prep_spec(graph_repo: Path) -> None:

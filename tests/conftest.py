@@ -67,9 +67,10 @@ defaults:
 #: The real development-graph profile (mirrors ``../agent-memory/workflow.yaml``): four nested
 #: types, and one store-wide ``status`` enum that is the union of their four vocabularies — which
 #: is why per-type status validity is a `hub graph validate` invariant, not a schema check.
-#: ``feedback-ready``/``prep`` are the feedback-loop vocabulary; a store on a profile that
-#: predates them still validates (the engine reads values, never the enum), which
-#: ``test_graph.py`` asserts by deleting them from this copy.
+#: ``feedback-ready``/``prep`` are the feedback-loop vocabulary and ``drafting``/``draft-ready`` /
+#: ``draft``/``critique`` are the planning-loop vocabulary; a store on a profile that predates
+#: them still validates (the engine reads values, never the enum), which ``test_graph.py`` asserts
+#: by deleting the feedback-loop values from this copy.
 WORKFLOW_PROFILE_YAML = """\
 name: workflow
 types:
@@ -83,11 +84,12 @@ types:
 common_required: [id, title, type, description, tags, status, visibility, created, updated]
 enums:
   status: [active, paused, planned, in-progress, implemented, rejected, needs-fix,
-           needs-feedback, feedback-ready, replan, running, cancelled, done, superseded]
+           needs-feedback, feedback-ready, drafting, draft-ready, replan, running, cancelled,
+           done, superseded]
   visibility: [private]
-  role: [plan, impl, test, fdbk, fix, prep]
+  role: [plan, impl, test, prep, fdbk, fix, draft, critique]
   verdict: [planned, implemented, rejected, needs-fix, needs-feedback, feedback-ready,
-            replan, done, superseded]
+            drafting, draft-ready, replan, done, superseded]
 defaults:
   status: planned
   visibility: private

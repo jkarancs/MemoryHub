@@ -41,10 +41,10 @@ DONE = "done"
 SUPERSEDED = "superseded"
 
 #: Node statuses that still carry work — the default scope of :meth:`Graph.ready`/:meth:`next`.
-#: ``feedback-ready`` is one of them: a prepped decision is work, it is simply a *person's*. The
-#: engine has no "statuses an agent may claim" set — a skill states the ones its role may act on
-#: (`--status planned,rejected,needs-fix`), so a human-gated status stays out of agent hands by
-#: nobody asking for it, not by a list here.
+#: ``feedback-ready`` and ``draft-ready`` are human-gated work: a prepped decision or a completed
+#: draft is still actionable, it is simply a *person's*. The engine has no "statuses an agent may
+#: claim" set — a skill states the ones its role may act on (`--status planned,rejected,needs-fix`),
+#: so a human-gated status stays out of agent hands by nobody asking for it, not by a list here.
 ACTIONABLE: tuple[str, ...] = (
     "planned",
     "rejected",
@@ -52,6 +52,8 @@ ACTIONABLE: tuple[str, ...] = (
     "implemented",
     "needs-feedback",
     "feedback-ready",
+    "drafting",
+    "draft-ready",
     "replan",
 )
 
@@ -90,6 +92,8 @@ STATUS_READS: dict[str, tuple[str, ...]] = {
     "implemented": ("plan", "impl", "fix"),
     "needs-feedback": _HUMAN_GATED_READS,
     "feedback-ready": _HUMAN_GATED_READS,
+    "drafting": ("plan", "draft", "critique", "fdbk"),
+    "draft-ready": ("plan", "draft", "critique", "fdbk"),
     "replan": _HUMAN_GATED_READS,
 }
 
