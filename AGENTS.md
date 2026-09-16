@@ -39,3 +39,5 @@ Workspace layer: [../CLAUDE.md](../CLAUDE.md) — cross-repo conventions (uv-man
 ## Knowledge Layer
 **Before exploring source or editing anything, read [.ai/CONTEXT.md](.ai/CONTEXT.md).** It is the complete index of this repo's knowledge — structure map, key flows, domain terms, and the rules for adding knowledge. Nothing in `.ai/` is routed from here; the full index is one file away.
 Read the smallest file that answers the task; stop when the next action is clear; capture reusable findings per the governance rules indexed there.
+
+@RTK.md
