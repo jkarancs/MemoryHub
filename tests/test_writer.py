@@ -234,6 +234,7 @@ def test_update_refuses_subnodes_that_drop_an_id_on_disk(workflow_repo: Path) ->
             fields={"subnodes": ["demo-hardening-04-plan", "demo-hardening-04-impl"]},
         )
     message = str(excinfo.value)
+    assert "demo-hardening-04:" in message
     assert "drops 1 id" in message
     assert "re-read the node and include it" in message
     assert path.read_bytes() == before
@@ -351,6 +352,35 @@ def test_cli_update_subnodes_drop_exits_1(
         ],
     )
     assert result.exit_code == 1
+    assert "demo-hardening-04:" in result.stderr
+    assert "demo-hardening-04-test" in result.stderr
+    assert "re-read the node" in result.stderr
+    assert path.read_bytes() == before
+
+
+def test_cli_update_set_cannot_authorize_subnode_removal(
+    workflow_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl", "demo-hardening-04-test"],
+    )
+    before = path.read_bytes()
+    monkeypatch.chdir(workflow_repo)
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "demo-hardening-04",
+            "--set",
+            "subnodes=[demo-hardening-04-plan, demo-hardening-04-impl]",
+            "--set",
+            "allow_subnode_removal=true",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "demo-hardening-04:" in result.stderr
     assert "demo-hardening-04-test" in result.stderr
     assert "re-read the node" in result.stderr
     assert path.read_bytes() == before

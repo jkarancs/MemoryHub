@@ -865,6 +865,8 @@ def update_cmd(
     """Update a memory (bumps `updated`, re-validates, atomic write)."""
     hub = _open_hub()
     fields = _parse_sets(set_)
+    # --set cannot authorize a subnodes drop; only --allow-subnode-removal may.
+    fields.pop("allow_subnode_removal", None)
     body = _read_body_file(body_file)
     if not fields and body is None:
         _fail("nothing to update: pass --set and/or --body-file")
