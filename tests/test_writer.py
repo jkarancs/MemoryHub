@@ -7,9 +7,11 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-from conftest import HUB_TOML
+from conftest import HUB_TOML, write_node
 from memoryhub import WriteError, WriteWarning, load_config, load_profile, loader, writer
+from memoryhub.cli import app
 
 PROFILE = load_profile("personal")
 
@@ -210,6 +212,179 @@ def test_update_missing_id_fails(seeded_repo: Path) -> None:
     config = load_config(seeded_repo)
     with pytest.raises(WriteError, match="no memory"):
         writer.update(config, "does-not-exist", fields={"description": "x"})
+
+
+def _node_with_subnodes(repo: Path, node_id: str, subnodes: list[str]) -> Path:
+    listed = ", ".join(subnodes)
+    return write_node(repo, node_id, extras={"subnodes": f"[{listed}]"})
+
+
+def test_update_refuses_subnodes_that_drop_an_id_on_disk(workflow_repo: Path) -> None:
+    path = _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl", "demo-hardening-04-test"],
+    )
+    before = path.read_bytes()
+    config = load_config(workflow_repo)
+    with pytest.raises(WriteError, match="demo-hardening-04-test") as excinfo:
+        writer.update(
+            config,
+            "demo-hardening-04",
+            fields={"subnodes": ["demo-hardening-04-plan", "demo-hardening-04-impl"]},
+        )
+    message = str(excinfo.value)
+    assert "drops 1 id" in message
+    assert "re-read the node and include it" in message
+    assert path.read_bytes() == before
+
+
+def test_update_subnodes_append_succeeds(workflow_repo: Path) -> None:
+    _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl"],
+    )
+    config = load_config(workflow_repo)
+    doc = writer.update(
+        config,
+        "demo-hardening-04",
+        fields={
+            "subnodes": [
+                "demo-hardening-04-plan",
+                "demo-hardening-04-impl",
+                "demo-hardening-04-test",
+            ]
+        },
+    )
+    assert doc.frontmatter.extra["subnodes"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-impl",
+        "demo-hardening-04-test",
+    ]
+
+
+def test_update_subnodes_reorder_succeeds(workflow_repo: Path) -> None:
+    _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl", "demo-hardening-04-test"],
+    )
+    config = load_config(workflow_repo)
+    doc = writer.update(
+        config,
+        "demo-hardening-04",
+        fields={
+            "subnodes": [
+                "demo-hardening-04-test",
+                "demo-hardening-04-plan",
+                "demo-hardening-04-impl",
+            ]
+        },
+    )
+    assert doc.frontmatter.extra["subnodes"] == [
+        "demo-hardening-04-test",
+        "demo-hardening-04-plan",
+        "demo-hardening-04-impl",
+    ]
+
+
+def test_update_related_and_tags_may_drop_ids(seeded_repo: Path) -> None:
+    config = load_config(seeded_repo)
+    skill = writer.update(
+        config, "skill-async-python", fields={"tags": ["python"], "related": []}
+    )
+    assert skill.frontmatter.tags == ["python"]
+    assert skill.frontmatter.related == []
+
+
+def test_update_depends_on_may_drop_ids(workflow_repo: Path) -> None:
+    write_node(
+        workflow_repo,
+        "demo-hardening-04",
+        extras={"depends_on": "[demo-hardening-03, demo-hardening-02]", "subnodes": "[]"},
+    )
+    config = load_config(workflow_repo)
+    node = writer.update(config, "demo-hardening-04", fields={"depends_on": ["demo-hardening-03"]})
+    assert node.frontmatter.extra["depends_on"] == ["demo-hardening-03"]
+
+
+def test_update_allow_subnode_removal_drops_ids_and_is_not_written(workflow_repo: Path) -> None:
+    _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl", "demo-hardening-04-test"],
+    )
+    config = load_config(workflow_repo)
+    doc = writer.update(
+        config,
+        "demo-hardening-04",
+        fields={
+            "subnodes": ["demo-hardening-04-plan", "demo-hardening-04-impl"],
+            "allow_subnode_removal": True,
+        },
+    )
+    assert doc.frontmatter.extra["subnodes"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-impl",
+    ]
+    assert "allow_subnode_removal" not in doc.frontmatter.extra
+
+
+def test_cli_update_subnodes_drop_exits_1(
+    workflow_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl", "demo-hardening-04-test"],
+    )
+    before = path.read_bytes()
+    monkeypatch.chdir(workflow_repo)
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "demo-hardening-04",
+            "--set",
+            "subnodes=[demo-hardening-04-plan, demo-hardening-04-impl]",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "demo-hardening-04-test" in result.stderr
+    assert "re-read the node" in result.stderr
+    assert path.read_bytes() == before
+
+
+def test_cli_update_allow_subnode_removal_succeeds(
+    workflow_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(workflow_repo)
+    _node_with_subnodes(
+        workflow_repo,
+        "demo-hardening-04",
+        ["demo-hardening-04-plan", "demo-hardening-04-impl", "demo-hardening-04-test"],
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "demo-hardening-04",
+            "--set",
+            "subnodes=[demo-hardening-04-plan, demo-hardening-04-impl]",
+            "--allow-subnode-removal",
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    config = load_config(workflow_repo)
+    loaded = loader.load_one(
+        workflow_repo / "graph" / "node" / "demo-hardening-04.md",
+        load_profile(config.profile_ref),
+    )
+    assert loaded.frontmatter.extra["subnodes"] == [
+        "demo-hardening-04-plan",
+        "demo-hardening-04-impl",
+    ]
 
 
 # --- delete -----------------------------------------------------------------------

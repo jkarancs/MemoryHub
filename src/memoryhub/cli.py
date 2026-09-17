@@ -856,6 +856,11 @@ def update_cmd(
     body_file: Path | None = typer.Option(
         None, "--body-file", help="Read the new body from a file."
     ),
+    allow_subnode_removal: bool = typer.Option(
+        False,
+        "--allow-subnode-removal",
+        help="Permit dropping ids from a node's subnodes list (repairs only).",
+    ),
 ) -> None:
     """Update a memory (bumps `updated`, re-validates, atomic write)."""
     hub = _open_hub()
@@ -863,6 +868,8 @@ def update_cmd(
     body = _read_body_file(body_file)
     if not fields and body is None:
         _fail("nothing to update: pass --set and/or --body-file")
+    if allow_subnode_removal:
+        fields["allow_subnode_removal"] = True
     with _guarded_write():
         doc = hub.update(id, **fields, body=body) if body is not None else hub.update(id, **fields)
     typer.secho(f"Updated {doc.id} at {doc.path}", fg=typer.colors.GREEN)

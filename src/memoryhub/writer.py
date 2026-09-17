@@ -195,6 +195,27 @@ def _find_existing(config: Config, id: str) -> Path:
     return existing[id]
 
 
+#: Patch-only key (never written to disk). CLI ``--allow-subnode-removal`` threads it here.
+_ALLOW_SUBNODE_REMOVAL = "allow_subnode_removal"
+
+
+def _refuse_dropped_subnodes(on_disk: Any, incoming: Any) -> None:
+    """Refuse a ``subnodes`` replacement that omits an id already present on disk."""
+    if not isinstance(on_disk, list):
+        return
+    kept = set(incoming) if isinstance(incoming, list) else set()
+    dropped = [sid for sid in on_disk if isinstance(sid, str) and sid not in kept]
+    if not dropped:
+        return
+    n = len(dropped)
+    noun = "id" if n == 1 else "ids"
+    include = "it" if n == 1 else "them"
+    raise WriteError(
+        f"subnodes drops {n} {noun} present on disk: {', '.join(dropped)} — "
+        f"re-read the node and include {include} (the list replaces, it does not append)"
+    )
+
+
 def update(
     config: Config,
     id: str,
@@ -206,7 +227,9 @@ def update(
 
     ``id`` and ``type`` may not change (a rename/move is not a single-file write). Setting a
     type-specific field to ``None`` removes it. ``updated`` is bumped to today unless the patch
-    sets it explicitly.
+    sets it explicitly. A ``subnodes`` patch that omits an id already on disk is refused unless
+    ``allow_subnode_removal`` is true in the patch (CLI ``--allow-subnode-removal``); that key is
+    never written to the file.
     """
     _check_policy(config, f"update {id!r}")
     profile = load_profile(config.profile_ref)
@@ -215,10 +238,13 @@ def update(
     doc = load_one(path, profile)
 
     patch = dict(fields or {})
+    allow_subnode_removal = bool(patch.pop(_ALLOW_SUBNODE_REMOVAL, False))
     if "id" in patch and patch["id"] != doc.frontmatter.id:
         raise WriteError("changing 'id' is not supported (delete and re-add instead)")
     if "type" in patch and patch["type"] != doc.frontmatter.type:
         raise WriteError("changing 'type' is not supported (the file would have to move)")
+    if "subnodes" in patch and not allow_subnode_removal:
+        _refuse_dropped_subnodes(doc.frontmatter.extra.get("subnodes"), patch["subnodes"])
 
     known_patch, extra_patch = split_fields(patch)
     known = doc.frontmatter.model_dump(exclude={"extra"})
