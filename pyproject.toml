@@ -32,7 +32,8 @@ dependencies = [
 vectors = ["lancedb", "pyarrow"]
 local-embed = ["sentence-transformers", "torch"]
 api-embed = ["openai"]
-mcp = ["mcp"]
+# FastMCP moved in mcp 2.x (renamed MCPServer); 1.14 is the oldest the MCP tests pass on.
+mcp = ["mcp>=1.14,<2"]
 # Exact token counting for context bundles (recall_bundle). Optional: without it the bundler
 # falls back to a len//4 heuristic, recording which counter it used in the manifest.
 tokens = ["tiktoken"]
@@ -40,12 +41,17 @@ tokens = ["tiktoken"]
 # heuristic fallback.
 dev = ["pytest", "pytest-cov", "ruff", "black", "mypy", "types-PyYAML", "tiktoken"]
 
+# `uv sync` installs this group by default, so a fresh clone runs `uv sync && uv run pytest`
+# against the same extras CI installs.
+[dependency-groups]
+dev = ["memoryhub[dev,mcp,vectors]"]
+
 [project.scripts]
 hub = "memoryhub.cli:app"
 
 [project.urls]
-Homepage = "https://example.com/MemoryHub"
-Repository = "https://example.com/MemoryHub"
+Homepage = "https://github.com/jkarancs/MemoryHub"
+Repository = "https://github.com/jkarancs/MemoryHub"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/memoryhub"]
@@ -70,7 +76,8 @@ line-length = 100
 target-version = ["py311"]
 
 [tool.mypy]
-python_version = "3.11"
+# No python_version pin: mypy checks at the running interpreter's version (CI covers 3.11-3.13).
+# Pinning 3.11 breaks on 3.12+ installs whose numpy stubs use 3.12-only syntax.
 packages = ["memoryhub"]
 mypy_path = "src"
 plugins = ["pydantic.mypy"]
@@ -80,7 +87,7 @@ no_implicit_optional = true
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["frontmatter", "yaml", "tomli", "lancedb", "pyarrow", "sentence_transformers", "openai"]
+module = ["frontmatter", "yaml", "tomli", "lancedb", "lancedb.*", "pyarrow", "sentence_transformers", "openai"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

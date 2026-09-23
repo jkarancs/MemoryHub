@@ -1,0 +1,10 @@
+# A synthetic store for the README demo: a fictional person, no real data.
+# `hub` finds this file by walking up from the current directory, so run the demo from here.
+[hub]
+name = "demo"
+content_root = "./memory"
+profile = "personal"
+
+[write]
+allow_agent_writes = true
+require_confirmation = false

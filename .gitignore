@@ -26,3 +26,11 @@ coverage.xml
 
 # AI knowledge layer
 .ai/scratchpad/
+
+# uv sync writes a lockfile; this is a library, so it is not pinned here
+uv.lock
+
+# Demo-store artifacts (`hub reindex`, `hub rm`, the `hub bundle` usage log)
+examples/*/.index/
+examples/*/.trash/
+examples/*/memory/.stats/

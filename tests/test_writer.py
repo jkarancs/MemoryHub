@@ -292,9 +292,7 @@ def test_update_subnodes_reorder_succeeds(workflow_repo: Path) -> None:
 
 def test_update_related_and_tags_may_drop_ids(seeded_repo: Path) -> None:
     config = load_config(seeded_repo)
-    skill = writer.update(
-        config, "skill-async-python", fields={"tags": ["python"], "related": []}
-    )
+    skill = writer.update(config, "skill-async-python", fields={"tags": ["python"], "related": []})
     assert skill.frontmatter.tags == ["python"]
     assert skill.frontmatter.related == []
 
